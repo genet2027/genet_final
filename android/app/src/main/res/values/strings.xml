@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Genet</string>
+    <string name="accessibility_service_description">Genet uses this to monitor which apps are opened so it can enforce parental controls and Sleep Lock Mode.</string>
+</resources>
