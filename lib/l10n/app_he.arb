@@ -1,0 +1,21 @@
+{
+  "@@locale": "he",
+  "appTitle": "ג'נט",
+  "contentLibraryTitle": "ספריית תכנים",
+  "backToRoleSelect": "חזרה לבחירת תפקיד",
+  "noContentAvailable": "אין תכנים זמינים לגיל ולמין הנוכחיים",
+  "buttonParentDashboard": "לוח בקרה להורה",
+  "buttonSelectLanguage": "בחירת שפה",
+  "languageEnglish": "אנגלית",
+  "languageHebrew": "עברית",
+  "languageArabic": "ערבית",
+  "chooseLanguage": "בחר שפה",
+  "protectionActive": "הגנה פעילה",
+  "childHomeTitle": "ילד",
+  "scheduleTomorrow": "מערכת שעות למחר",
+  "blockedAppsAndTimes": "אפליקציות חסומות וזמני שימוש",
+  "homeSubtitle": "המכשיר שלך מוגן",
+  "homeNavLabel": "בית",
+  "contentNavLabel": "תכנים",
+  "lastUpdatedLabel": "עדכון אחרון"
+}

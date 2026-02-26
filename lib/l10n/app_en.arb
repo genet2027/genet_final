@@ -1,0 +1,21 @@
+{
+  "@@locale": "en",
+  "appTitle": "Genet",
+  "contentLibraryTitle": "Content Library",
+  "backToRoleSelect": "Back to role select",
+  "noContentAvailable": "No content available for the current age and gender",
+  "buttonParentDashboard": "Parent Dashboard",
+  "buttonSelectLanguage": "Select Language",
+  "languageEnglish": "English",
+  "languageHebrew": "Hebrew",
+  "languageArabic": "Arabic",
+  "chooseLanguage": "Choose Language",
+  "protectionActive": "Protection active",
+  "childHomeTitle": "Child",
+  "scheduleTomorrow": "Schedule for tomorrow",
+  "blockedAppsAndTimes": "Blocked apps and usage times",
+  "homeSubtitle": "Your device is protected",
+  "homeNavLabel": "Home",
+  "contentNavLabel": "Content",
+  "lastUpdatedLabel": "Last updated"
+}

@@ -3,7 +3,6 @@ package com.example.genet_final
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
-import android.os.Bundle
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -12,6 +11,12 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
 
     private val CHANNEL = "com.example.genet_final/config"
+
+    /**
+     * Initial route sent to Flutter. Use "/content-library" to open Content Library (ספריית תכנים)
+     * on app launch; use null or "" for default (Role Select).
+     */
+    override fun getInitialRoute(): String? = "/content-library"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -50,6 +55,7 @@ class MainActivity : FlutterActivity() {
                     }
                     result.success(null)
                 }
+                "getInitialRoute" -> result.success(getInitialRoute())
                 else -> result.notImplemented()
             }
         }

@@ -81,7 +81,7 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
                 title: Text(name),
                 value: blocked,
                 onChanged: (_) => _toggleBlock(id),
-                activeColor: AppTheme.primaryBlue,
+                activeThumbColor: AppTheme.primaryBlue,
               ),
             );
           }),

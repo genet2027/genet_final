@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/config/genet_config.dart';
 import '../theme/app_theme.dart';
-import 'parent_panel_screen.dart';
+import 'parent_shell.dart';
 
 const String _kPinStorageKey = 'genet_parent_pin';
 const String _kDefaultPin = '1234';
@@ -38,7 +38,7 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (context) => const ParentPanelScreen(),
+            builder: (context) => const ParentShell(),
           ),
         );
       }
@@ -82,7 +82,7 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
             Icon(
               Icons.lock_outline,
               size: 80,
-              color: AppTheme.primaryBlue.withOpacity(0.8),
+              color: AppTheme.primaryBlue.withValues(alpha: 0.8),
             ),
             const SizedBox(height: 24),
             const Text(

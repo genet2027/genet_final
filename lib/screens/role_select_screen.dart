@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
+import '../widgets/language_switcher.dart';
+import 'child_home_screen.dart';
 import 'pin_login_screen.dart';
 
-/// מסך הבית - מציג סטטוס הגנה פעילה וכפתור כניסת הורה
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+/// מסך בחירת תפקיד: הורה או ילד. כניסה ראשית לאפליקציה.
+class RoleSelectScreen extends StatelessWidget {
+  const RoleSelectScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -24,21 +27,6 @@ class HomeScreen extends StatelessWidget {
             child: Column(
               children: [
                 const SizedBox(height: 60),
-                // לוגו / אייקון
-                Container(
-                  width: 120,
-                  height: 120,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.lock,
-                    size: 64,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 32),
                 const Text(
                   'Genet',
                   style: TextStyle(
@@ -47,31 +35,12 @@ class HomeScreen extends StatelessWidget {
                     color: Colors.white,
                   ),
                 ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.25),
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.check_circle, color: Colors.white, size: 20),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'הגנה פעילה',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ],
-                  ),
+                const SizedBox(height: 24),
+                const Text(
+                  'בחר תפקיד',
+                  style: TextStyle(fontSize: 20, color: Colors.white70),
                 ),
                 const Spacer(),
-                // כפתור כניסת הורה
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
@@ -88,7 +57,27 @@ class HomeScreen extends StatelessWidget {
                       foregroundColor: AppTheme.primaryBlue,
                       padding: const EdgeInsets.symmetric(vertical: 18),
                     ),
-                    child: const Text('Parent Dashboard'),
+                    child: const Text('הורה'),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () {
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const ChildHomeScreen(),
+                        ),
+                      );
+                    },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: const BorderSide(color: Colors.white, width: 2),
+                      padding: const EdgeInsets.symmetric(vertical: 18),
+                    ),
+                    child: const Text('ילד'),
                   ),
                 ),
                 const SizedBox(height: 40),
@@ -96,6 +85,11 @@ class HomeScreen extends StatelessWidget {
             ),
           ),
         ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => LanguageSwitcher.showPicker(context),
+        tooltip: AppLocalizations.of(context)!.buttonSelectLanguage,
+        child: const Icon(Icons.language),
       ),
     );
   }

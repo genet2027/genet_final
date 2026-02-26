@@ -1,0 +1,21 @@
+{
+  "@@locale": "ar",
+  "appTitle": "جينت",
+  "contentLibraryTitle": "مكتبة المحتوى",
+  "backToRoleSelect": "العودة لاختيار الدور",
+  "noContentAvailable": "لا يوجد محتوى متاح للعمر والجنس الحاليين",
+  "buttonParentDashboard": "لوحة تحكم الوالدين",
+  "buttonSelectLanguage": "اختر اللغة",
+  "languageEnglish": "الإنجليزية",
+  "languageHebrew": "العبرية",
+  "languageArabic": "العربية",
+  "chooseLanguage": "اختر اللغة",
+  "protectionActive": "الحماية نشطة",
+  "childHomeTitle": "الطفل",
+  "scheduleTomorrow": "الجدول لغداً",
+  "blockedAppsAndTimes": "التطبيقات المحظورة وأوقات الاستخدام",
+  "homeSubtitle": "جهازك محمي",
+  "homeNavLabel": "الرئيسية",
+  "contentNavLabel": "المحتوى",
+  "lastUpdatedLabel": "آخر تحديث"
+}

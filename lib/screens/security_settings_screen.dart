@@ -86,7 +86,7 @@ class _SecuritySettingsScreenState extends State<SecuritySettingsScreen> {
             Icon(
               Icons.lock_reset,
               size: 64,
-              color: AppTheme.primaryBlue.withOpacity(0.8),
+              color: AppTheme.primaryBlue.withValues(alpha: 0.8),
             ),
             const SizedBox(height: 8),
             const Text(

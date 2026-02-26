@@ -117,7 +117,7 @@ class _SleepLockScreenState extends State<SleepLockScreen> {
                     _saveSettings();
                   });
                 },
-                activeColor: AppTheme.primaryBlue,
+                activeThumbColor: AppTheme.primaryBlue,
               ),
             ),
             const SizedBox(height: 24),
@@ -138,7 +138,7 @@ class _SleepLockScreenState extends State<SleepLockScreen> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
-              tileColor: AppTheme.lightBlue.withOpacity(0.5),
+              tileColor: AppTheme.lightBlue.withValues(alpha: 0.5),
             ),
             const SizedBox(height: 20),
             const Text(
@@ -158,7 +158,7 @@ class _SleepLockScreenState extends State<SleepLockScreen> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
-              tileColor: AppTheme.lightBlue.withOpacity(0.5),
+              tileColor: AppTheme.lightBlue.withValues(alpha: 0.5),
             ),
             const SizedBox(height: 24),
             Text(
