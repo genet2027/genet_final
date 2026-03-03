@@ -1,6 +1,10 @@
 package com.example.genet_final
 
 import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.WindowManager
@@ -13,9 +17,18 @@ class LockActivity : Activity() {
 
     private lateinit var pinInput: EditText
     private lateinit var submitButton: Button
+    private var blockedPackage: String = ""
+    private val configReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != GenetAccessibilityService.ACTION_CONFIG_CHANGED) return
+            val prefs = getSharedPreferences(GenetAccessibilityService.PREFS_NAME, MODE_PRIVATE)
+            if (!GenetAccessibilityService.shouldStillShowLock(prefs, blockedPackage)) finish()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        blockedPackage = intent.getStringExtra(GenetAccessibilityService.EXTRA_BLOCKED_PACKAGE) ?: ""
         window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN or
                 WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
                 WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
@@ -36,6 +49,12 @@ class LockActivity : Activity() {
                 true
             } else false
         }
+        registerReceiver(configReceiver, IntentFilter(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
+    }
+
+    override fun onDestroy() {
+        try { unregisterReceiver(configReceiver) } catch (_: Exception) {}
+        super.onDestroy()
     }
 
     override fun onBackPressed() {

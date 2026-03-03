@@ -7,7 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
-import '../theme/app_theme.dart';
+import '../widgets/rounded_card.dart';
 import '../services/night_mode_service.dart';
 import '../repositories/night_mode_repository.dart';
 import '../repositories/messages_repository.dart';
@@ -27,21 +27,21 @@ class BackupSupportScreen extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           children: [
             const SizedBox(height: 16),
-            _RoundedCard(
+            RoundedCard(
               icon: Icons.upload_file_rounded,
               title: 'ייצוא גיבוי',
               subtitle: 'שמירת נתונים (מצב לילה + הודעות) לקובץ JSON',
               onTap: () => _exportBackup(context),
             ),
             const SizedBox(height: 12),
-            _RoundedCard(
+            RoundedCard(
               icon: Icons.folder_open_rounded,
               title: 'ייבוא / שחזור גיבוי',
               subtitle: 'טען קובץ גיבוי JSON',
               onTap: () => _importBackup(context),
             ),
             const SizedBox(height: 12),
-            _RoundedCard(
+            RoundedCard(
               icon: Icons.bug_report_rounded,
               title: 'דיווח על בעיה',
               subtitle: 'גרסה, פרטי מכשיר ולוג לדיבוג',
@@ -53,7 +53,7 @@ class BackupSupportScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            _RoundedCard(
+            RoundedCard(
               icon: Icons.mail_rounded,
               title: 'צור קשר',
               subtitle: 'שליחת מייל לתמיכה',
@@ -153,68 +153,6 @@ class BackupSupportScreen extends StatelessWidget {
             child: const Text('סגור'),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _RoundedCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback? onTap;
-
-  const _RoundedCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      elevation: 2,
-      shadowColor: Colors.black.withValues(alpha: 0.08),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: AppTheme.lightBlue,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(icon, color: AppTheme.primaryBlue, size: 24),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w600, fontSize: 16)),
-                    const SizedBox(height: 4),
-                    Text(subtitle,
-                        style: TextStyle(
-                            color: Colors.grey.shade600, fontSize: 13)),
-                  ],
-                ),
-              ),
-              if (onTap != null)
-                Icon(Icons.arrow_forward_ios,
-                    size: 14, color: Colors.grey.shade400),
-            ],
-          ),
-        ),
       ),
     );
   }
