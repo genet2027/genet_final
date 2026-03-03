@@ -10,7 +10,7 @@ class LanguageProvider extends ChangeNotifier {
     _loadLocale();
   }
 
-  Locale _locale = const Locale('en');
+  Locale _locale = const Locale('he', 'IL');
   Locale get locale => _locale;
 
   static const List<Locale> supportedLocales = [

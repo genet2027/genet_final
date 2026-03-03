@@ -42,6 +42,10 @@ class GenetApp extends StatelessWidget {
             locale: languageProvider.locale,
             supportedLocales: AppLocalizations.supportedLocales,
             localizationsDelegates: AppLocalizations.localizationsDelegates,
+            builder: (context, child) => Directionality(
+              textDirection: TextDirection.rtl,
+              child: child ?? const SizedBox.shrink(),
+            ),
             home: RoleSelectScreen(),
           );
         },

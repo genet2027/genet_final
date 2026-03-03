@@ -27,7 +27,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get backToRoleSelect => 'Back to role select';
 
   @override
-  String get noContentAvailable => 'No content available for the current age and gender';
+  String get noContentAvailable =>
+      'No content available for the current age and gender';
 
   @override
   String get buttonParentDashboard => 'Parent Dashboard';

@@ -27,7 +27,7 @@ class _ParentShellState extends State<ParentShell> {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        appBar: AppBar(title: Text(_tabs[_selectedIndex].label), elevation: 0),
+        appBar: AppBar(title: const Text('הורה'), elevation: 0),
         body: IndexedStack(
           index: _selectedIndex,
           children: const [

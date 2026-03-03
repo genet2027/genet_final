@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 import 'blocked_apps_screen.dart';
+import 'child_settings_screen.dart';
 import 'content_library_screen.dart';
 import 'sleep_lock_screen.dart';
 
@@ -41,7 +42,12 @@ class ParentDashboardTab extends StatelessWidget {
             ),
           ),
           SingleChildScrollView(
-            padding: const EdgeInsets.only(top: 24, left: 20, right: 20, bottom: 24),
+            padding: const EdgeInsets.only(
+              top: 24,
+              left: 20,
+              right: 20,
+              bottom: 24,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -59,6 +65,8 @@ class ParentDashboardTab extends StatelessWidget {
                 _YomiCard(),
                 const SizedBox(height: 16),
                 _ManagementButton(),
+                const SizedBox(height: 12),
+                _ChildSettingsButton(),
                 const SizedBox(height: 20),
                 SizedBox(
                   height: 120,
@@ -137,7 +145,9 @@ class _YomiCard extends StatelessWidget {
                       value: 0.5,
                       strokeWidth: 4,
                       backgroundColor: Colors.white.withValues(alpha: 0.3),
-                      valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                      valueColor: const AlwaysStoppedAnimation<Color>(
+                        Colors.white,
+                      ),
                     ),
                   ),
                   Container(
@@ -172,10 +182,7 @@ class _YomiCard extends StatelessWidget {
                 SizedBox(height: 4),
                 Text(
                   'מתוזמן',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.white70,
-                  ),
+                  style: TextStyle(fontSize: 14, color: Colors.white70),
                   textDirection: TextDirection.rtl,
                 ),
               ],
@@ -195,9 +202,9 @@ class _ManagementButton extends StatelessWidget {
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('ניהול ילדים')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('ניהול ילדים')));
         },
         borderRadius: BorderRadius.circular(14),
         child: Padding(
@@ -210,6 +217,47 @@ class _ManagementButton extends StatelessWidget {
               const SizedBox(width: 10),
               const Text(
                 'ניהול ילדים',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+                textDirection: TextDirection.rtl,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ChildSettingsButton extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.25),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const ChildSettingsScreen(),
+            ),
+          );
+        },
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.child_care_rounded, color: AppTheme.primaryBlue, size: 24),
+              const SizedBox(width: 10),
+              const Text(
+                'הגדרת ילד',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
@@ -273,4 +321,3 @@ class _GridCard extends StatelessWidget {
     );
   }
 }
-

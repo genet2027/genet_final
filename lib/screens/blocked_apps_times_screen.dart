@@ -96,7 +96,10 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
     if (raw != null && raw.isNotEmpty) {
       try {
         list = List<Map<String, dynamic>>.from(
-            (jsonDecode(raw) as List).map((e) => Map<String, dynamic>.from(e as Map)));
+          (jsonDecode(raw) as List).map(
+            (e) => Map<String, dynamic>.from(e as Map),
+          ),
+        );
       } catch (_) {}
     }
     list.add({
@@ -162,10 +165,7 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
             const SizedBox(height: 20),
             const Text(
               'אפליקציות חסומות',
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                fontSize: 16,
-              ),
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
             ),
             const SizedBox(height: 8),
             if (_blockedIds.isEmpty)
@@ -179,38 +179,43 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
                 ),
               )
             else
-              ..._allApps.where((app) => _blockedIds.contains(app['id'])).map((app) {
-                  final id = app['id'] as String;
-                  final name = app['name'] as String;
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
+              ..._allApps.where((app) => _blockedIds.contains(app['id'])).map((
+                app,
+              ) {
+                final id = app['id'] as String;
+                final name = app['name'] as String;
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
                     ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 12),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              name,
-                              textDirection: TextDirection.rtl,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w500, fontSize: 16),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            name,
+                            textDirection: TextDirection.rtl,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w500,
+                              fontSize: 16,
                             ),
                           ),
-                          TextButton.icon(
-                            onPressed: () =>
-                                _showExtensionBottomSheet(id, name),
-                            icon: const Icon(Icons.schedule, size: 18),
-                            label: const Text('בקשת הארכה'),
-                          ),
-                        ],
-                      ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => _showExtensionBottomSheet(id, name),
+                          icon: const Icon(Icons.schedule, size: 18),
+                          label: const Text('בקשת הארכה'),
+                        ),
+                      ],
                     ),
-                  );
-                }),
+                  ),
+                );
+              }),
           ],
         ),
       ),

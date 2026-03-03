@@ -23,6 +23,7 @@ class GenetConfig {
       await setBlockedApps(blocked);
     } on PlatformException catch (_) {}
   }
+
   static const _channel = MethodChannel('com.example.genet_final/config');
 
   static Future<void> setPin(String pin) async {
