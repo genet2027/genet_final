@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/config/genet_config.dart';
+import '../core/pin_storage.dart';
 import '../theme/app_theme.dart';
-
-const String _kPinStorageKey = 'genet_parent_pin';
 
 /// מסך הגדרות אבטחה - שינוי קוד PIN
 class SecuritySettingsScreen extends StatefulWidget {
@@ -38,10 +37,8 @@ class _SecuritySettingsScreenState extends State<SecuritySettingsScreen> {
       return;
     }
 
-    final prefs = await SharedPreferences.getInstance();
-    final storedPin = prefs.getString(_kPinStorageKey) ?? '1234';
-
-    if (current != storedPin) {
+    final currentOk = await PinStorage.verifyPin(current);
+    if (!currentOk) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('קוד PIN נוכחי שגוי')),
@@ -50,7 +47,8 @@ class _SecuritySettingsScreenState extends State<SecuritySettingsScreen> {
       return;
     }
 
-    await prefs.setString(_kPinStorageKey, newPin);
+    await PinStorage.savePin(newPin);
+    await GenetConfig.setPin(newPin);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(

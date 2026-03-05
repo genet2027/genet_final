@@ -2,14 +2,11 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/config/genet_config.dart';
+import '../core/pin_storage.dart';
 import '../theme/app_theme.dart';
 import 'parent_shell.dart';
-
-const String _kPinStorageKey = 'genet_parent_pin';
-const String _kDefaultPin = '1234';
 
 /// מסך הזנת PIN לאימות הורה
 class PinLoginScreen extends StatefulWidget {
@@ -23,16 +20,11 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
   final TextEditingController _pinController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
 
-  Future<String> _getStoredPin() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_kPinStorageKey) ?? _kDefaultPin;
-  }
-
   void _checkPin() async {
-    final storedPin = await _getStoredPin();
     final enteredPin = _pinController.text;
+    final ok = await PinStorage.verifyPin(enteredPin);
 
-    if (enteredPin == storedPin) {
+    if (ok) {
       if (Platform.isAndroid) GenetConfig.setPin(enteredPin);
       if (mounted) {
         Navigator.pushReplacement(

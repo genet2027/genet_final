@@ -65,6 +65,19 @@ class MainActivity : FlutterActivity() {
                     sendBroadcast(android.content.Intent(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
                     result.success(null)
                 }
+                "setPermissionLockEnabled" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: false
+                    getGenetPrefs().edit().putBoolean(GenetAccessibilityService.KEY_PERMISSION_LOCK_ENABLED, enabled).apply()
+                    result.success(null)
+                }
+                "getPermissionLockEnabled" -> {
+                    result.success(getGenetPrefs().getBoolean(GenetAccessibilityService.KEY_PERMISSION_LOCK_ENABLED, false))
+                }
+                "setMaintenanceWindowEnd" -> {
+                    val endMs = (call.argument<Number>("endMs")?.toLong()) ?: 0L
+                    getGenetPrefs().edit().putLong(GenetAccessibilityService.KEY_MAINTENANCE_WINDOW_END, endMs).apply()
+                    result.success(null)
+                }
                 "reportEvent" -> {
                     val pkg = call.argument<String>("packageName") ?: ""
                     val ts = call.argument<Number>("timestamp")?.toLong() ?: System.currentTimeMillis()
@@ -88,6 +101,7 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
                 "isAccessibilityServiceEnabled" -> result.success(isAccessibilityServiceEnabled())
+                "getMissingPermissions" -> result.success(getMissingPermissions())
                 "getInitialRoute" -> result.success(getInitialRoute())
                 "getInstalledApps" -> {
                     try {
@@ -118,6 +132,25 @@ class MainActivity : FlutterActivity() {
         val accessibilityOn = Settings.Secure.getInt(contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 0) == 1
         if (!accessibilityOn) return false
         return enabledList.split(":").any { it.equals(serviceName, ignoreCase = true) }
+    }
+
+    /** מחזיר רשימת הרשאות חסרות: "accessibility", "usage", "overlay" — לשימוש לפני הפעלת חסימה. */
+    private fun getMissingPermissions(): List<String> {
+        val missing = mutableListOf<String>()
+        if (!isAccessibilityServiceEnabled()) missing.add("accessibility")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) missing.add("overlay")
+        if (!hasUsageAccess()) missing.add("usage")
+        return missing
+    }
+
+    private fun hasUsageAccess(): Boolean {
+        return try {
+            val um = getSystemService(android.content.Context.USAGE_STATS_SERVICE) as android.app.usage.UsageStatsManager
+            um.queryUsageStats(android.app.usage.UsageStatsManager.INTERVAL_DAILY, System.currentTimeMillis() - 60000, System.currentTimeMillis())
+            true
+        } catch (e: SecurityException) {
+            false
+        }
     }
 
     private fun getGenetPrefs() = getSharedPreferences(GenetAccessibilityService.PREFS_NAME, MODE_PRIVATE)

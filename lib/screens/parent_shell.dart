@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../core/config/genet_config.dart';
 import '../theme/app_theme.dart';
 import 'parent_dashboard_tab.dart';
 import 'reports_tab.dart';
+import 'required_permissions_screen.dart';
 import 'settings_screen.dart';
 
 /// Parent-only shell with BottomNavigationBar: Dashboard | Reports | Settings.
@@ -13,8 +17,47 @@ class ParentShell extends StatefulWidget {
   State<ParentShell> createState() => _ParentShellState();
 }
 
-class _ParentShellState extends State<ParentShell> {
+class _ParentShellState extends State<ParentShell> with WidgetsBindingObserver {
   int _selectedIndex = 0;
+  bool _showingRequiredPermissions = false;
+  Timer? _permissionCheckTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _checkPermissionsAndShowIfNeeded();
+    _permissionCheckTimer = Timer.periodic(const Duration(seconds: 45), (_) => _checkPermissionsAndShowIfNeeded());
+  }
+
+  @override
+  void dispose() {
+    _permissionCheckTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _checkPermissionsAndShowIfNeeded();
+  }
+
+  Future<void> _checkPermissionsAndShowIfNeeded() async {
+    if (_showingRequiredPermissions || !mounted) return;
+    final missing = await GenetConfig.getMissingPermissions();
+    if (!mounted) return;
+    if (missing.isEmpty) return;
+    setState(() => _showingRequiredPermissions = true);
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => RequiredPermissionsScreen(
+          onDismiss: () => setState(() => _showingRequiredPermissions = false),
+        ),
+      ),
+    );
+    if (mounted) setState(() => _showingRequiredPermissions = false);
+  }
 
   static const List<_TabInfo> _tabs = [
     _TabInfo(icon: Icons.dashboard_rounded, label: 'לוח בקרה'),

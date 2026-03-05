@@ -11,8 +11,6 @@ class GenetConfig {
     if (!Platform.isAndroid) return;
     try {
       final prefs = await SharedPreferences.getInstance();
-      final pin = prefs.getString('genet_parent_pin') ?? '1234';
-      await setPin(pin);
 
       final enabled = prefs.getBool('genet_sleep_lock_enabled') ?? false;
       final start = prefs.getString('genet_sleep_lock_start') ?? '22:00';
@@ -21,7 +19,27 @@ class GenetConfig {
 
       final blocked = prefs.getStringList('genet_blocked_packages') ?? [];
       await setBlockedApps(blocked);
+
+      final permissionLock = prefs.getBool('genet_permission_lock_enabled') ?? false;
+      await setPermissionLockEnabled(permissionLock);
     } on PlatformException catch (_) {}
+  }
+
+  static Future<void> setPermissionLockEnabled(bool enabled) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod('setPermissionLockEnabled', {'enabled': enabled});
+    } on PlatformException catch (_) {}
+  }
+
+  static Future<bool> getPermissionLockEnabled() async {
+    if (!Platform.isAndroid) return false;
+    try {
+      final r = await _channel.invokeMethod<bool>('getPermissionLockEnabled');
+      return r ?? false;
+    } on PlatformException catch (_) {
+      return false;
+    }
   }
 
   static const _channel = MethodChannel('com.example.genet_final/config');
@@ -73,6 +91,23 @@ class GenetConfig {
     if (!Platform.isAndroid) return;
     try {
       await _channel.invokeMethod('openOverlaySettings');
+    } on PlatformException catch (_) {}
+  }
+
+  static Future<List<String>> getMissingPermissions() async {
+    if (!Platform.isAndroid) return [];
+    try {
+      final r = await _channel.invokeMethod<List<dynamic>>('getMissingPermissions');
+      return (r ?? []).map((e) => e.toString()).toList();
+    } on PlatformException catch (_) {
+      return [];
+    }
+  }
+
+  static Future<void> setMaintenanceWindowEnd(int endMs) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod('setMaintenanceWindowEnd', {'endMs': endMs});
     } on PlatformException catch (_) {}
   }
 }

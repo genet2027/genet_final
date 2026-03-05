@@ -8,7 +8,7 @@
     android:background="#1565C0">
 
     <TextView
-        android:id="@+id/lock_title"
+        android:id="@+id/overlay_title"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="לילה טוב"
@@ -18,23 +18,11 @@
         android:layout_marginBottom="16dp" />
 
     <TextView
-        android:id="@+id/lock_subtitle"
+        android:id="@+id/overlay_subtitle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="Good night"
         android:textSize="20sp"
         android:textColor="#E3F2FD" />
-
-    <!-- שמירת IDs לתאימות LockOverlayView – לא בשימוש במסך הנעילה הפשוט -->
-    <EditText
-        android:id="@+id/lock_pin_input"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:visibility="gone" />
-    <Button
-        android:id="@+id/lock_submit"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:visibility="gone" />
 
 </LinearLayout>
