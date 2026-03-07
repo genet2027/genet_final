@@ -26,16 +26,12 @@ class ChildHomeScreen extends StatelessWidget {
           onPressed: () {
             Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(
-                builder: (context) => const RoleSelectScreen(),
-              ),
+              MaterialPageRoute(builder: (context) => const RoleSelectScreen()),
               (route) => false,
             );
           },
         ),
-        actions: const [
-          LanguageSwitcher(),
-        ],
+        actions: const [LanguageSwitcher()],
       ),
       body: FutureBuilder<ChildModel?>(
         future: ChildModel.load(),
@@ -44,7 +40,11 @@ class ChildHomeScreen extends StatelessWidget {
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              if (child != null && (child.name.isNotEmpty || child.age > 0 || child.grade.isNotEmpty || child.schoolCode.isNotEmpty)) ...[
+              if (child != null &&
+                  (child.name.isNotEmpty ||
+                      child.age > 0 ||
+                      child.grade.isNotEmpty ||
+                      child.schoolCode.isNotEmpty)) ...[
                 _ChildInfoCard(model: child),
                 const SizedBox(height: 16),
               ],
@@ -108,15 +108,15 @@ class _ChildInfoCard extends StatelessWidget {
           children: [
             const Text(
               'פרטי משתמש',
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                fontSize: 16,
-              ),
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
               textDirection: TextDirection.rtl,
             ),
             const SizedBox(height: 12),
             _InfoRow(label: 'שם', value: model.name),
-            _InfoRow(label: 'גיל', value: model.age > 0 ? model.age.toString() : ''),
+            _InfoRow(
+              label: 'גיל',
+              value: model.age > 0 ? model.age.toString() : '',
+            ),
             _InfoRow(label: 'כיתה', value: model.grade),
             _InfoRow(label: 'קוד בית ספר', value: model.schoolCode),
           ],

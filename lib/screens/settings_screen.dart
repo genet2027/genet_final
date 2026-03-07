@@ -159,7 +159,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       Switch(
                         value: _permissionLockEnabled,
                         onChanged: _onPermissionLockToggle,
-                        activeColor: AppTheme.primaryBlue,
+                        activeThumbColor: AppTheme.primaryBlue,
                       ),
                   ],
                 ),

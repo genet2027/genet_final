@@ -110,4 +110,12 @@ class GenetConfig {
       await _channel.invokeMethod('setMaintenanceWindowEnd', {'endMs': endMs});
     } on PlatformException catch (_) {}
   }
+
+  /// Sync map of packageName -> untilMs (extension approved until) to native so blocked app is allowed until that time.
+  static Future<void> setExtensionApproved(Map<String, int> packageToUntilMs) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod('setExtensionApproved', {'map': packageToUntilMs});
+    } on PlatformException catch (_) {}
+  }
 }

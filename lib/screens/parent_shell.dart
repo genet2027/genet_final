@@ -60,7 +60,7 @@ class _ParentShellState extends State<ParentShell> with WidgetsBindingObserver {
   }
 
   static const List<_TabInfo> _tabs = [
-    _TabInfo(icon: Icons.dashboard_rounded, label: 'לוח בקרה'),
+    _TabInfo(icon: Icons.dashboard_rounded, label: 'הורה'),
     _TabInfo(icon: Icons.chat_rounded, label: 'דיווחים'),
     _TabInfo(icon: Icons.settings_rounded, label: 'הגדרות'),
   ];

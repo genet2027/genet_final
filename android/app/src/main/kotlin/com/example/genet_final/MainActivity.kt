@@ -78,6 +78,18 @@ class MainActivity : FlutterActivity() {
                     getGenetPrefs().edit().putLong(GenetAccessibilityService.KEY_MAINTENANCE_WINDOW_END, endMs).apply()
                     result.success(null)
                 }
+                "setExtensionApproved" -> {
+                    @Suppress("UNCHECKED_CAST")
+                    val map = call.argument<Map<String, Any>>("map") ?: emptyMap<String, Any>()
+                    val json = JSONObject()
+                    map.forEach { (pkg, value) ->
+                        val until = (value as? Number)?.toLong() ?: 0L
+                        if (until > 0L) json.put(pkg, until)
+                    }
+                    getGenetPrefs().edit().putString(GenetAccessibilityService.KEY_EXTENSION_APPROVED_UNTIL, json.toString()).apply()
+                    sendBroadcast(android.content.Intent(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
+                    result.success(null)
+                }
                 "reportEvent" -> {
                     val pkg = call.argument<String>("packageName") ?: ""
                     val ts = call.argument<Number>("timestamp")?.toLong() ?: System.currentTimeMillis()

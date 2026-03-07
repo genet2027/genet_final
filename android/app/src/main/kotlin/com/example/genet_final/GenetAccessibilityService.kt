@@ -98,6 +98,17 @@ class GenetAccessibilityService : AccessibilityService() {
             set
         }
         if (prefs.getBoolean(KEY_BLOCK_WEB_SEARCH, true)) base.addAll(WEB_SEARCH_PACKAGES)
+        val now = System.currentTimeMillis()
+        val approvedJson = prefs.getString(KEY_EXTENSION_APPROVED_UNTIL, "{}") ?: "{}"
+        try {
+            val approved = JSONObject(approvedJson)
+            val iter = approved.keys()
+            while (iter.hasNext()) {
+                val pkg = iter.next()
+                val until = approved.optLong(pkg, 0L)
+                if (until > now) base.remove(pkg)
+            }
+        } catch (_: Exception) {}
         return base
     }
 
@@ -165,6 +176,7 @@ class GenetAccessibilityService : AccessibilityService() {
         const val KEY_BLOCK_WEB_SEARCH = "block_web_search"
         const val KEY_PERMISSION_LOCK_ENABLED = "permission_lock_enabled"
         const val KEY_MAINTENANCE_WINDOW_END = "maintenance_window_end"
+        const val KEY_EXTENSION_APPROVED_UNTIL = "extension_approved_until"
         val SETTINGS_PACKAGES = setOf("com.android.settings", "com.google.android.settings")
         /** חבילות שמאפשרות שינוי הרשאות/התקנה – חסימה כשנעילת הרשאות פעילה */
         val PERMISSION_CONTROLLER_PACKAGES = setOf(
@@ -232,6 +244,17 @@ class GenetAccessibilityService : AccessibilityService() {
                 set
             }
             if (prefs.getBoolean(KEY_BLOCK_WEB_SEARCH, true)) base.addAll(WEB_SEARCH_PACKAGES)
+            val now = System.currentTimeMillis()
+            val approvedJson = prefs.getString(KEY_EXTENSION_APPROVED_UNTIL, "{}") ?: "{}"
+            try {
+                val approved = JSONObject(approvedJson)
+                val iter = approved.keys()
+                while (iter.hasNext()) {
+                    val pkg = iter.next()
+                    val until = approved.optLong(pkg, 0L)
+                    if (until > now) base.remove(pkg)
+                }
+            } catch (_: Exception) {}
             return base
         }
     }
