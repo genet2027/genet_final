@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -11,6 +13,12 @@ const String _kSleepLockEndKey = 'genet_sleep_lock_end';
 const String _kBlockedPackagesKey = 'genet_blocked_packages';
 
 const MethodChannel _channel = MethodChannel('com.example.genet_final/config');
+
+String _formatRemaining(int totalSeconds) {
+  final m = totalSeconds ~/ 60;
+  final s = totalSeconds % 60;
+  return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+}
 
 /// אפליקציות חסומות וזמני שימוש – מסך הילד. מסונכרן עם רשימת ההורה. בקשת הארכה משויכת לאפליקציה.
 class BlockedAppsTimesScreen extends StatefulWidget {
@@ -27,12 +35,24 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
   List<String> _blockedPackages = [];
   List<Map<String, dynamic>> _installedApps = [];
   List<ExtensionRequest> _requests = [];
+  Map<String, int> _approvedUntil = {};
   bool _loading = true;
+  Timer? _countdownTimer;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
+      final map = await getExtensionApprovedUntil();
+      if (mounted) setState(() => _approvedUntil = map);
+    });
+  }
+
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -51,6 +71,7 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
       if (raw != null) installed = raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
     } on PlatformException catch (_) {}
     final requests = await getExtensionRequests();
+    final approvedUntil = await getExtensionApprovedUntil();
     if (mounted) {
       setState(() {
         _lockEnabled = prefs.getBool(_kSleepLockEnabledKey) ?? false;
@@ -59,6 +80,7 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
         _blockedPackages = blocked;
         _installedApps = installed;
         _requests = requests;
+        _approvedUntil = approvedUntil;
         _loading = false;
       });
     }
@@ -72,12 +94,24 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
   }
 
   String _requestStatusForPackage(String packageName) {
+    final untilMs = _approvedUntil[packageName];
+    if (untilMs != null && untilMs > DateTime.now().millisecondsSinceEpoch) {
+      return 'אושר זמנית';
+    }
     final r = _requests.where((e) => e.packageName == packageName).toList();
     if (r.isEmpty) return '';
     final last = r.last;
     if (last.status == ExtensionRequestStatus.pending) return 'ממתין לאישור';
     if (last.status == ExtensionRequestStatus.approved) return 'אושר זמנית';
     return 'נדחה';
+  }
+
+  int? _remainingSeconds(String packageName) {
+    final untilMs = _approvedUntil[packageName];
+    if (untilMs == null) return null;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (untilMs <= now) return null;
+    return ((untilMs - now) / 1000).floor();
   }
 
   void _showExtensionBottomSheet(String packageName, String appName) {
@@ -249,6 +283,25 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
                                                     ? Colors.green.shade700
                                                     : Colors.grey.shade600,
                                           ),
+                                        ),
+                                      ),
+                                    if (_remainingSeconds(pkg) != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 6),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.timer, size: 14, color: Colors.green.shade700),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              'זמן שנותר: ${_formatRemaining(_remainingSeconds(pkg)!)}',
+                                              textDirection: TextDirection.rtl,
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.green.shade700,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                   ],

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -11,6 +12,12 @@ import '../theme/app_theme.dart';
 const String _kBlockedPackagesKey = 'genet_blocked_packages';
 const MethodChannel _channel = MethodChannel('com.example.genet_final/config');
 
+String _formatRemainingParent(int totalSeconds) {
+  final m = totalSeconds ~/ 60;
+  final s = totalSeconds % 60;
+  return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+}
+
 /// מסך רשימת אפליקציות חסומות + בקשות הארכה מהילד.
 class BlockedAppsScreen extends StatefulWidget {
   const BlockedAppsScreen({super.key});
@@ -23,18 +30,36 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
   List<Map<String, dynamic>> _installedApps = [];
   final List<String> _blockedPackages = [];
   List<ExtensionRequest> _extensionRequests = [];
+  Map<String, int> _approvedUntil = {};
   bool _loading = true;
+  Timer? _extensionTimer;
 
   @override
   void initState() {
     super.initState();
     _loadAll();
+    _extensionTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
+      final map = await getExtensionApprovedUntil();
+      if (mounted) setState(() => _approvedUntil = map);
+    });
+  }
+
+  @override
+  void dispose() {
+    _extensionTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadAll() async {
     await _loadBlocked();
     await _loadInstalledApps();
     await _loadExtensionRequests();
+    await _loadApprovedUntil();
+  }
+
+  Future<void> _loadApprovedUntil() async {
+    final map = await getExtensionApprovedUntil();
+    if (mounted) setState(() => _approvedUntil = map);
   }
 
   Future<void> _loadBlocked() async {
@@ -136,6 +161,27 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
       );
       _loadExtensionRequests();
     }
+  }
+
+  Future<void> _cancelExtension(String packageName) async {
+    final map = await getExtensionApprovedUntil();
+    map.remove(packageName);
+    await saveExtensionApprovedUntil(map);
+    await GenetConfig.setExtensionApproved(map);
+    if (mounted) {
+      setState(() => _approvedUntil = Map.from(map));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('הארכת הזמן בוטלה, האפליקציה נחסמה שוב')),
+      );
+    }
+  }
+
+  int? _remainingSeconds(String packageName) {
+    final untilMs = _approvedUntil[packageName];
+    if (untilMs == null) return null;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (untilMs <= now) return null;
+    return ((untilMs - now) / 1000).floor();
   }
 
   @override
@@ -290,15 +336,50 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
                   final name = app['name'] as String? ?? packageName;
                   final iconBase64 = app['icon'] as String?;
                   final blocked = _blockedPackages.contains(packageName);
+                  final hasActiveExtension = blocked && _remainingSeconds(packageName) != null;
 
                   return Card(
                     margin: const EdgeInsets.only(bottom: 8),
-                    child: SwitchListTile(
-                      secondary: _buildAppIcon(iconBase64),
-                      title: Text(name),
-                      value: blocked,
-                      onChanged: (_) => _toggleBlock(packageName),
-                      activeThumbColor: AppTheme.primaryBlue,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SwitchListTile(
+                          secondary: _buildAppIcon(iconBase64),
+                          title: Text(name),
+                          value: blocked,
+                          onChanged: (_) => _toggleBlock(packageName),
+                          activeThumbColor: AppTheme.primaryBlue,
+                        ),
+                        if (hasActiveExtension)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                            child: Row(
+                              children: [
+                                Icon(Icons.timer, size: 16, color: Colors.green.shade700),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'הארכה פעילה – זמן שנותר: ${_formatRemainingParent(_remainingSeconds(packageName)!)}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.green.shade700,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                TextButton(
+                                  onPressed: () => _cancelExtension(packageName),
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: Colors.red,
+                                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                                    minimumSize: Size.zero,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                  child: const Text('בטל הארכת זמן'),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
                     ),
                   );
                 }),

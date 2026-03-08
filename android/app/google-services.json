@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "449485085204",
+    "project_id": "genet-d66a4",
+    "storage_bucket": "genet-d66a4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:449485085204:android:9582424d1af979879b2501",
+        "android_client_info": {
+          "package_name": "com.example.genet_final"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCoPvmhZfiNAMiYCgfxGem-Kp6abRugGiM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:449485085204:android:2736f107b739cd019b2501",
+        "android_client_info": {
+          "package_name": "com.example.genet_mvp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCoPvmhZfiNAMiYCgfxGem-Kp6abRugGiM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,7 +1,9 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'core/config/genet_config.dart';
+import 'firebase_options.dart';
 import 'l10n/app_localizations.dart';
 import 'providers/language_provider.dart';
 import 'screens/role_select_screen.dart';
@@ -11,6 +13,9 @@ import 'theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   await JsonTranslations.ensureLoaded();
   GenetConfig.syncToNative();
   final nightModeService = NightModeService();
