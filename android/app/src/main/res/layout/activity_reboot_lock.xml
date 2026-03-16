@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="32dp"
+    android:background="#1565C0">
+
+    <TextView
+        android:id="@+id/reboot_lock_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="אימות הורה נדרש"
+        android:textSize="24sp"
+        android:textColor="@android:color/white"
+        android:textStyle="bold"
+        android:layout_marginBottom="8dp" />
+
+    <TextView
+        android:id="@+id/reboot_lock_subtitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="המכשיר הופעל מחדש. הזן קוד PIN לאימות."
+        android:textSize="16sp"
+        android:textColor="#E3F2FD"
+        android:layout_marginBottom="24dp" />
+
+    <EditText
+        android:id="@+id/reboot_lock_pin"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:inputType="numberPassword"
+        android:maxLength="6"
+        android:hint="קוד PIN"
+        android:paddingHorizontal="16dp"
+        android:background="@android:drawable/edit_text"
+        android:layout_marginBottom="16dp" />
+
+    <Button
+        android:id="@+id/reboot_lock_submit"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="אישור" />
+</LinearLayout>

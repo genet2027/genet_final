@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'blocked_apps_screen.dart';
 import 'child_settings_screen.dart';
+import 'children_management_screen.dart';
 import 'content_library_screen.dart';
 import 'sleep_lock_screen.dart';
 
@@ -202,9 +203,12 @@ class _ManagementButton extends StatelessWidget {
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: () {
-          ScaffoldMessenger.of(
+          Navigator.push(
             context,
-          ).showSnackBar(const SnackBar(content: Text('ניהול ילדים')));
+            MaterialPageRoute(
+              builder: (_) => const ChildrenManagementScreen(),
+            ),
+          );
         },
         borderRadius: BorderRadius.circular(14),
         child: Padding(

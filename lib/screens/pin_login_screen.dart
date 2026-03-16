@@ -26,6 +26,7 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
 
     if (ok) {
       if (Platform.isAndroid) GenetConfig.setPin(enteredPin);
+      GenetConfig.setChildMode(false);
       if (mounted) {
         Navigator.pushReplacement(
           context,

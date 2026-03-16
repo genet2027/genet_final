@@ -40,6 +40,10 @@ class LockActivity : Activity() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 GenetAccessibilityService.ACTION_CONFIG_CHANGED -> {
+                    if (blockedPackage == packageName) {
+                        finish()
+                        return
+                    }
                     val prefs = getSharedPreferences(GenetAccessibilityService.PREFS_NAME, MODE_PRIVATE)
                     if (!GenetAccessibilityService.shouldStillShowLock(prefs, blockedPackage)) finish()
                 }
@@ -51,6 +55,10 @@ class LockActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         blockedPackage = intent.getStringExtra(GenetAccessibilityService.EXTRA_BLOCKED_PACKAGE) ?: ""
+        if (blockedPackage == packageName) {
+            finish()
+            return
+        }
         window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN or
                 WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
                 WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../core/config/genet_config.dart';
+import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
 import 'parent_dashboard_tab.dart';
 import 'reports_tab.dart';
@@ -25,6 +26,8 @@ class _ParentShellState extends State<ParentShell> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    GenetConfig.setChildMode(false);
+    getOrCreateParentId();
     WidgetsBinding.instance.addObserver(this);
     _checkPermissionsAndShowIfNeeded();
     _permissionCheckTimer = Timer.periodic(const Duration(seconds: 45), (_) => _checkPermissionsAndShowIfNeeded());

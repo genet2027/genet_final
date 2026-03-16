@@ -1,17 +1,108 @@
+import 'dart:async';
+import 'dart:developer' as developer;
+
 import 'package:flutter/material.dart';
 
+import '../core/config/genet_config.dart';
 import '../l10n/app_localizations.dart';
 import '../models/child_model.dart';
+import '../repositories/children_repository.dart';
+import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
 import '../widgets/language_switcher.dart';
 import 'blocked_apps_times_screen.dart';
+import 'child_link_screen.dart';
 import 'content_library_screen.dart';
 import 'role_select_screen.dart';
 import 'school_schedule_screen.dart';
 
-/// Child home: menu with cards. Displays configured child info (read-only) when available.
-class ChildHomeScreen extends StatelessWidget {
+/// Child home: connection status from Firebase only. When parent disconnects, UI updates in place.
+class ChildHomeScreen extends StatefulWidget {
   const ChildHomeScreen({super.key});
+
+  @override
+  State<ChildHomeScreen> createState() => _ChildHomeScreenState();
+}
+
+class _ChildHomeScreenState extends State<ChildHomeScreen> {
+  StreamSubscription<SyncedChildData?>? _firebaseSyncSub;
+
+  /// Single source of truth from Firebase: true = connected, false = disconnected, null = loading
+  bool? _firebaseConnectionStatus;
+  String? _linkedNameForDisplay;
+
+  @override
+  void initState() {
+    super.initState();
+    _startFirebaseConnectionListener();
+  }
+
+  Future<void> _startFirebaseConnectionListener() async {
+    final parentId = await getLinkedParentId();
+    final childId = await getLinkedChildId();
+    if (parentId == null || parentId.isEmpty || childId == null || childId.isEmpty) {
+      developer.log('Child connection status: no parentId or childId, showing disconnected', name: 'Sync');
+      if (mounted) setState(() => _firebaseConnectionStatus = false);
+      return;
+    }
+    developer.log('CHILD_READ_PATH = genet_parents/$parentId/children/$childId', name: 'Sync');
+    developer.log('CHILD_READ_CHILD_ID = $childId', name: 'Sync');
+    if (mounted) setState(() => _firebaseConnectionStatus = null);
+    _firebaseSyncSub = watchSyncedChildDataStream(parentId, childId).listen((data) async {
+      if (!mounted) return;
+      final status = data?.connectionStatus;
+      final docParentId = data?.parentId;
+      developer.log('CHILD_LISTENER: child doc updated', name: 'Sync');
+      developer.log('CHILD_LISTENER: parentId = $docParentId', name: 'Sync');
+      developer.log('CHILD_LISTENER: connectionStatus = $status', name: 'Sync');
+      // Only treat as disconnected when Firebase explicitly says so (doc exists and status/parentId indicate disconnect).
+      // Do NOT treat null data as disconnect: doc may not exist yet right after connect (race).
+      if (data == null) {
+        developer.log('Child connection status: no doc yet (loading), not disconnecting', name: 'Sync');
+        return;
+      }
+      final isConnected = isConnectionStatusConnected(status) &&
+          (docParentId != null && docParentId.isNotEmpty);
+      if (isConnected) {
+        developer.log('Child connected (from Firebase)', name: 'Sync');
+        final name = await getLinkedChildName();
+        if (mounted) {
+          setState(() {
+            _firebaseConnectionStatus = true;
+            _linkedNameForDisplay = name;
+          });
+        }
+      } else {
+        developer.log('Child disconnected (from Firebase) status=$status parentId=$docParentId', name: 'Sync');
+        await _handleDisconnected();
+      }
+    });
+  }
+
+  Future<void> _handleDisconnected() async {
+    _firebaseSyncSub?.cancel();
+    _firebaseSyncSub = null;
+    await setLinkedChild(null, null);
+    await setLinkedParentId(null);
+    if (!mounted) return;
+    setState(() {
+      _firebaseConnectionStatus = false;
+      _linkedNameForDisplay = null;
+    });
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('הקישור להורה הוסר. ניתן להתחבר מחדש.'),
+        ),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _firebaseSyncSub?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -24,6 +115,7 @@ class ChildHomeScreen extends StatelessWidget {
           icon: const Icon(Icons.arrow_back),
           tooltip: l10n.backToRoleSelect,
           onPressed: () {
+            GenetConfig.setChildMode(false);
             Navigator.pushAndRemoveUntil(
               context,
               MaterialPageRoute(builder: (context) => const RoleSelectScreen()),
@@ -33,13 +125,145 @@ class ChildHomeScreen extends StatelessWidget {
         ),
         actions: const [LanguageSwitcher()],
       ),
-      body: FutureBuilder<ChildModel?>(
-        future: ChildModel.load(),
+      body: FutureBuilder<List<dynamic>>(
+        future: Future.wait([
+          ChildModel.load(),
+          getLinkedChildName(),
+          getChildSelfProfile(),
+        ]),
         builder: (context, snapshot) {
-          final child = snapshot.data;
+          final hasData = snapshot.connectionState == ConnectionState.done && snapshot.data != null && snapshot.data!.length >= 3;
+          ChildModel? child;
+          String? linkedName;
+          Map<String, dynamic>? selfProfile;
+          if (hasData) {
+            child = snapshot.data![0] as ChildModel?;
+            linkedName = snapshot.data![1] as String?;
+            selfProfile = snapshot.data![2] as Map<String, dynamic>?;
+            if (child == null && selfProfile != null && selfProfile.isNotEmpty) {
+              final first = selfProfile[kChildSelfProfileFirstName] as String? ?? '';
+              final last = selfProfile[kChildSelfProfileLastName] as String? ?? '';
+              final name = [first, last].join(' ').trim();
+              final age = (selfProfile[kChildSelfProfileAge] as num?)?.toInt() ?? 0;
+              final schoolCode = selfProfile[kChildSelfProfileSchoolCode] as String? ?? '';
+              if (name.isNotEmpty || age > 0 || schoolCode.isNotEmpty) {
+                child = ChildModel(name: name, age: age, schoolCode: schoolCode);
+              }
+            }
+          }
+          final isConnected = _firebaseConnectionStatus == true;
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              const Text('Child Screen Loaded', style: TextStyle(fontSize: 12, color: Colors.grey)), // DEBUG: remove after verifying correct screen
+              const SizedBox(height: 8),
+              if (isConnected) ...[
+                Card(
+                  elevation: 2,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      textDirection: TextDirection.rtl,
+                      children: [
+                        Icon(Icons.link, color: AppTheme.primaryBlue),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text(
+                                'מחובר להורה',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 16,
+                                ),
+                                textDirection: TextDirection.rtl,
+                              ),
+                              if ((_linkedNameForDisplay ?? linkedName) != null && (_linkedNameForDisplay ?? linkedName)!.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 6),
+                                  child: Text(
+                                    (_linkedNameForDisplay ?? linkedName)!,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey.shade700,
+                                    ),
+                                    textDirection: TextDirection.rtl,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+              if (!isConnected) ...[
+                Card(
+                  elevation: 2,
+                  color: Colors.amber.shade50,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          textDirection: TextDirection.rtl,
+                          children: [
+                            Icon(Icons.link_off, color: Colors.amber.shade800, size: 28),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'לא מחובר להורה',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 16,
+                                  color: Colors.amber.shade900,
+                                ),
+                                textDirection: TextDirection.rtl,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'יש לחבר להורה כדי להפעיל את הניהול',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.amber.shade800,
+                          ),
+                          textDirection: TextDirection.rtl,
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const ChildLinkScreen(),
+                              ),
+                            ).then((_) {
+                              if (mounted) setState(() {});
+                            });
+                          },
+                          icon: const Icon(Icons.link),
+                          label: const Text('התחברות להורה'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppTheme.primaryBlue,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
               if (child != null &&
                   (child.name.isNotEmpty ||
                       child.age > 0 ||

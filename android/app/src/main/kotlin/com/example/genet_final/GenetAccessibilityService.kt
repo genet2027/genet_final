@@ -22,6 +22,7 @@ class GenetAccessibilityService : AccessibilityService() {
     private var debounceRunnable: Runnable? = null
     @Volatile private var lastForegroundPkg: String? = null
     @Volatile private var lastShouldShowOverlay = false
+    @Volatile private var lastBlockedApp = false
 
     /** חבילות שאסור לחסום (Genet, Launcher, SystemUI, Recents בלבד) */
     private fun isWhitelisted(pkg: String): Boolean {
@@ -38,37 +39,124 @@ class GenetAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
-        val pkg = event.packageName?.toString() ?: return
-        val className = event.className?.toString() ?: ""
-
+        val eventType = event?.eventType ?: return
+        if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val permissionLockOn = prefs.getBoolean(KEY_PERMISSION_LOCK_ENABLED, false)
-        val maintenanceEnd = prefs.getLong(KEY_MAINTENANCE_WINDOW_END, 0L)
-        val inMaintenanceWindow = maintenanceEnd > 0 && System.currentTimeMillis() < maintenanceEnd
-        val isSettings = pkg in SETTINGS_PACKAGES
-        if (isSettings) Log.d(TAG, "Settings pkg=$pkg className=$className")
-
-        val permissionScreenInSettings = isSettings && GenetAccessibilityService.isPermissionSettingsScreen(className)
-        val permissionControllerPkg = pkg in PERMISSION_CONTROLLER_PACKAGES
-        val blockByPermissionLock = !inMaintenanceWindow && permissionLockOn && (permissionScreenInSettings || permissionControllerPkg)
-        val whitelisted = isWhitelisted(pkg)
-        val blockedSet = getBlockedPackagesSet(prefs)
-        val blockedApp = !whitelisted && blockedSet.contains(pkg)
-
-        lastForegroundPkg = pkg
-        lastShouldShowOverlay = blockedApp || blockByPermissionLock
-        if (blockedApp) appendBlockedEvent(pkg, System.currentTimeMillis(), "blocked")
-
-        if (whitelisted && !blockByPermissionLock) {
-            lastShouldShowOverlay = false
+        val isChildMode = prefs.getBoolean(KEY_IS_CHILD_MODE, false)
+        if (!isChildMode) {
+            Log.d("GENET", "Parent mode detected - skipping blocks")
+            handler.post { overlayManager.hide() }
+            return
         }
+        Log.d("GENET", "Child mode active - applying restrictions")
+        val foregroundPackage = event.packageName?.toString()
+        if (foregroundPackage == null || foregroundPackage.isBlank()) {
+            Log.d("GENET", "Skipping block because package is null/blank")
+            return
+        }
+        Log.d("GENET", "Foreground package: $foregroundPackage")
+        val genetPackage = applicationContext.packageName
+        if (foregroundPackage == genetPackage || foregroundPackage.startsWith("io.flutter")) {
+            Log.d("GENET", "Skipping block for Genet")
+            lastForegroundPkg = foregroundPackage
+            lastShouldShowOverlay = false
+            lastBlockedApp = false
+            debounceRunnable?.let { handler.removeCallbacks(it) }
+            handler.post { overlayManager.hide() }
+            return
+        }
+        if (foregroundPackage in PERMISSION_CONTROLLER_PACKAGES) {
+            Log.d("GENET", "Skipping block for permission screen")
+            lastForegroundPkg = foregroundPackage
+            lastShouldShowOverlay = false
+            lastBlockedApp = false
+            debounceRunnable?.let { handler.removeCallbacks(it) }
+            handler.post { overlayManager.hide() }
+            return
+        }
+        val pkgFromEvent = event.packageName?.toString()
+        val mayBlockSettings = event != null &&
+            pkgFromEvent != null &&
+            pkgFromEvent.isNotBlank() &&
+            pkgFromEvent == "com.android.settings" &&
+            pkgFromEvent != genetPackage &&
+            eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        if (mayBlockSettings) {
+            Log.d("GENET", "Blocking Android Settings")
+            performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+            Log.d("GENET", "HOME action triggered from settings block")
+            lastForegroundPkg = foregroundPackage
+            lastShouldShowOverlay = false
+            lastBlockedApp = false
+            debounceRunnable?.let { handler.removeCallbacks(it) }
+            handler.post { overlayManager.hide() }
+            return
+        }
+        if (foregroundPackage in SETTINGS_PACKAGES || foregroundPackage in PERMISSION_CONTROLLER_PACKAGES) {
+            lastForegroundPkg = foregroundPackage
+            lastShouldShowOverlay = false
+            lastBlockedApp = false
+            debounceRunnable?.let { handler.removeCallbacks(it) }
+            handler.post { overlayManager.hide() }
+            return
+        }
+        val approvedJson = prefs.getString(KEY_EXTENSION_APPROVED_UNTIL, "{}") ?: "{}"
+        val now = System.currentTimeMillis()
+        var temporarilyApproved = false
+        try {
+            val until = JSONObject(approvedJson).optLong(foregroundPackage, 0L)
+            temporarilyApproved = until > now
+        } catch (_: Exception) {}
+        if (temporarilyApproved) {
+            lastForegroundPkg = foregroundPackage
+            lastShouldShowOverlay = false
+            lastBlockedApp = false
+            debounceRunnable?.let { handler.removeCallbacks(it) }
+            handler.post { overlayManager.hide() }
+            return
+        }
+        val whitelisted = isWhitelisted(foregroundPackage)
+        val blockedSet = getBlockedPackagesSet(prefs)
+        val blockedApp = !whitelisted && blockedSet.contains(foregroundPackage)
+        Log.d(TAG, "foreground app: $foregroundPackage | is blocked: $blockedApp | is temporarily approved: $temporarilyApproved")
+
+        lastForegroundPkg = foregroundPackage
+        lastBlockedApp = blockedApp
+        lastShouldShowOverlay = blockedApp
+        if (blockedApp) appendBlockedEvent(foregroundPackage, System.currentTimeMillis(), "blocked")
 
         debounceRunnable?.let { handler.removeCallbacks(it) }
         debounceRunnable = Runnable {
+            val runnablePrefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            val isChildModeNow = runnablePrefs.getBoolean(KEY_IS_CHILD_MODE, false)
+            if (!isChildModeNow) {
+                Log.d("GENET", "Parent mode detected in runnable - skipping all blocks")
+                overlayManager.hide()
+                debounceRunnable = null
+                return@Runnable
+            }
+            if (lastForegroundPkg == applicationContext.packageName) {
+                overlayManager.hide()
+                debounceRunnable = null
+                return@Runnable
+            }
+            if (lastForegroundPkg != null && (lastForegroundPkg in SETTINGS_PACKAGES || lastForegroundPkg in PERMISSION_CONTROLLER_PACKAGES)) {
+                overlayManager.hide()
+                debounceRunnable = null
+                return@Runnable
+            }
             if (lastShouldShowOverlay) {
-                try { startActivity(homeIntent) } catch (_: Exception) {}
-                if (!overlayManager.isVisible()) overlayManager.show()
+                val showRecovery = lastBlockedApp && PermissionChecker.getMissingPermissions(applicationContext).isNotEmpty()
+                if (showRecovery) {
+                    val intent = Intent(applicationContext, MainActivity::class.java)
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    intent.putExtra(MainActivity.EXTRA_SHOW_PERMISSION_RECOVERY, true)
+                    try { startActivity(intent) } catch (_: Exception) {}
+                    overlayManager.hide()
+                } else {
+                    try { startActivity(homeIntent) } catch (_: Exception) {}
+                    if (!overlayManager.isVisible()) overlayManager.show()
+                }
             } else {
                 overlayManager.hide()
             }
@@ -109,6 +197,7 @@ class GenetAccessibilityService : AccessibilityService() {
                 if (until > now) base.remove(pkg)
             }
         } catch (_: Exception) {}
+        base.remove(applicationContext.packageName)
         return base
     }
 
@@ -177,6 +266,9 @@ class GenetAccessibilityService : AccessibilityService() {
         const val KEY_PERMISSION_LOCK_ENABLED = "permission_lock_enabled"
         const val KEY_MAINTENANCE_WINDOW_END = "maintenance_window_end"
         const val KEY_EXTENSION_APPROVED_UNTIL = "extension_approved_until"
+        const val KEY_IS_CHILD_MODE = "genet_is_child_mode"
+        /** Set by boot receiver when in child mode and protection incomplete; cleared only after parent PIN in RebootLockActivity. */
+        const val KEY_REQUIRE_PARENT_UNLOCK_AFTER_REBOOT = "genet_require_parent_unlock_after_reboot"
         val SETTINGS_PACKAGES = setOf("com.android.settings", "com.google.android.settings")
         /** חבילות שמאפשרות שינוי הרשאות/התקנה – חסימה כשנעילת הרשאות פעילה */
         val PERMISSION_CONTROLLER_PACKAGES = setOf(
@@ -231,6 +323,9 @@ class GenetAccessibilityService : AccessibilityService() {
             }
         }
 
+        /** Genet must never be blocked (debug + release package names). */
+        private val GENET_PACKAGES = setOf("com.example.genet_final")
+
         private fun getBlockedPackagesSetStatic(prefs: android.content.SharedPreferences): Set<String> {
             val base = cachedBlockedPackages?.toMutableSet() ?: run {
                 val set = mutableSetOf<String>()
@@ -255,6 +350,7 @@ class GenetAccessibilityService : AccessibilityService() {
                     if (until > now) base.remove(pkg)
                 }
             } catch (_: Exception) {}
+            base.removeAll(GENET_PACKAGES)
             return base
         }
     }

@@ -5,12 +5,13 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/extension_requests.dart';
+import '../repositories/children_repository.dart';
+import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
 
 const String _kSleepLockEnabledKey = 'genet_sleep_lock_enabled';
 const String _kSleepLockStartKey = 'genet_sleep_lock_start';
 const String _kSleepLockEndKey = 'genet_sleep_lock_end';
-const String _kBlockedPackagesKey = 'genet_blocked_packages';
 
 const MethodChannel _channel = MethodChannel('com.example.genet_final/config');
 
@@ -37,33 +38,58 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
   List<ExtensionRequest> _requests = [];
   Map<String, int> _approvedUntil = {};
   bool _loading = true;
+  String? _linkedChildId;
   Timer? _countdownTimer;
+  StreamSubscription<SyncedChildData?>? _syncSub;
 
   @override
   void initState() {
     super.initState();
     _load();
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
-      final map = await getExtensionApprovedUntil();
+      final cid = _linkedChildId;
+      final map = await getExtensionApprovedUntil(cid);
       if (mounted) setState(() => _approvedUntil = map);
+    });
+    getLinkedParentId().then((parentId) {
+      getLinkedChildId().then((childId) {
+        if (parentId != null && childId != null && mounted) {
+          _syncSub = watchSyncedChildDataStream(parentId, childId).listen((data) {
+            if (data != null && mounted) {
+              setState(() {
+                _blockedPackages = data.blockedPackages;
+                _approvedUntil = Map.from(data.extensionApproved);
+                _requests = data.extensionRequests;
+              });
+            }
+          });
+        }
+      });
     });
   }
 
   @override
   void dispose() {
     _countdownTimer?.cancel();
+    _syncSub?.cancel();
     super.dispose();
   }
 
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
-    var blocked = prefs.getStringList(_kBlockedPackagesKey) ?? [];
-    if (blocked.isEmpty) {
-      final legacy = prefs.getStringList('genet_blocked_apps') ?? [];
-      if (legacy.isNotEmpty) {
-        await prefs.setStringList(_kBlockedPackagesKey, legacy);
-        blocked = legacy;
+    final linkedId = await getLinkedChildId();
+    var blocked = <String>[];
+    Map<String, int> approvedUntil = {};
+    if (linkedId != null && linkedId.isNotEmpty) {
+      blocked = await getBlockedPackagesForChild(linkedId);
+      approvedUntil = await getExtensionApprovedForChild(linkedId);
+    } else {
+      blocked = prefs.getStringList('genet_blocked_packages') ?? [];
+      if (blocked.isEmpty) {
+        final legacy = prefs.getStringList('genet_blocked_apps') ?? [];
+        if (legacy.isNotEmpty) blocked = legacy;
       }
+      approvedUntil = await getExtensionApprovedUntil();
     }
     List<Map<String, dynamic>> installed = [];
     try {
@@ -71,15 +97,17 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
       if (raw != null) installed = raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
     } on PlatformException catch (_) {}
     final requests = await getExtensionRequests();
-    final approvedUntil = await getExtensionApprovedUntil();
     if (mounted) {
       setState(() {
+        _linkedChildId = linkedId;
         _lockEnabled = prefs.getBool(_kSleepLockEnabledKey) ?? false;
         _startTime = prefs.getString(_kSleepLockStartKey) ?? '20:00';
         _endTime = prefs.getString(_kSleepLockEndKey) ?? '08:00';
         _blockedPackages = blocked;
         _installedApps = installed;
-        _requests = requests;
+        _requests = linkedId != null && linkedId.isNotEmpty
+            ? requests.where((r) => r.childId == linkedId).toList()
+            : requests;
         _approvedUntil = approvedUntil;
         _loading = false;
       });
@@ -95,14 +123,13 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
 
   String _requestStatusForPackage(String packageName) {
     final untilMs = _approvedUntil[packageName];
-    if (untilMs != null && untilMs > DateTime.now().millisecondsSinceEpoch) {
-      return 'אושר זמנית';
-    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (untilMs != null && untilMs > now) return 'אושר זמנית';
     final r = _requests.where((e) => e.packageName == packageName).toList();
     if (r.isEmpty) return '';
     final last = r.last;
     if (last.status == ExtensionRequestStatus.pending) return 'ממתין לאישור';
-    if (last.status == ExtensionRequestStatus.approved) return 'אושר זמנית';
+    if (last.status == ExtensionRequestStatus.approved) return ''; // הארכה הסתיימה – לא להציג אושר זמנית
     return 'נדחה';
   }
 
@@ -158,16 +185,29 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
   }
 
   Future<void> _sendExtensionRequest(String packageName, String appName, int minutes) async {
+    final linkedId = await getLinkedChildId();
+    final linkedParentId = await getLinkedParentId();
+    final linkedName = await getLinkedChildName();
+    final firstName = await getLinkedChildFirstName();
+    final lastName = await getLinkedChildLastName();
     final list = await getExtensionRequests();
-    list.add(ExtensionRequest(
+    final req = ExtensionRequest(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       packageName: packageName,
       appName: appName,
       minutes: minutes,
       status: ExtensionRequestStatus.pending,
       requestedAt: DateTime.now().millisecondsSinceEpoch,
-    ));
+      childId: linkedId ?? '',
+      childName: linkedName ?? '',
+      childFirstName: firstName ?? '',
+      childLastName: lastName ?? '',
+    );
+    list.add(req);
     await saveExtensionRequests(list);
+    if (linkedParentId != null && linkedId != null) {
+      await addExtensionRequestToFirebase(linkedParentId, linkedId, req);
+    }
     if (mounted) {
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(

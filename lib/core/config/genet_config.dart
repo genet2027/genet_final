@@ -1,12 +1,17 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../repositories/children_repository.dart';
+
 /// Syncs parent config (PIN, Sleep Lock, blocked apps) to native Android storage
 /// so the Accessibility Service can enforce locks.
 class GenetConfig {
   /// Sync all config from Flutter prefs to native. Call on app startup.
+  /// When this device is linked to a child, blocked apps and extension approved
+  /// are taken from that child's data.
   static Future<void> syncToNative() async {
     if (!Platform.isAndroid) return;
     try {
@@ -17,12 +22,35 @@ class GenetConfig {
       final end = prefs.getString('genet_sleep_lock_end') ?? '07:00';
       await setSleepLock(enabled: enabled, start: start, end: end);
 
-      final blocked = prefs.getStringList('genet_blocked_packages') ?? [];
+      List<String> blocked;
+      Map<String, int> extensionApproved;
+      final linkedChildId = await getLinkedChildId();
+      if (linkedChildId != null && linkedChildId.isNotEmpty) {
+        blocked = await getBlockedPackagesForChild(linkedChildId);
+        extensionApproved = await getExtensionApprovedForChild(linkedChildId);
+      } else {
+        blocked = prefs.getStringList('genet_blocked_packages') ?? [];
+        final raw = prefs.getString('genet_extension_approved_until');
+        extensionApproved = raw != null && raw.isNotEmpty
+            ? _decodeExtensionApproved(raw) ?? {}
+            : {};
+      }
       await setBlockedApps(blocked);
+      await setExtensionApproved(extensionApproved);
 
       final permissionLock = prefs.getBool('genet_permission_lock_enabled') ?? false;
       await setPermissionLockEnabled(permissionLock);
     } on PlatformException catch (_) {}
+  }
+
+  static Map<String, int>? _decodeExtensionApproved(String raw) {
+    try {
+      if (raw.isEmpty) return null;
+      final map = jsonDecode(raw) as Map<String, dynamic>;
+      return map.map((k, v) => MapEntry(k, (v as num).toInt()));
+    } catch (_) {
+      return null;
+    }
   }
 
   static Future<void> setPermissionLockEnabled(bool enabled) async {
@@ -94,6 +122,49 @@ class GenetConfig {
     } on PlatformException catch (_) {}
   }
 
+  /// Set child mode (true) or parent mode (false). Blocking runs only when in child mode.
+  static Future<void> setChildMode(bool isChildMode) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod('setChildMode', {'isChildMode': isChildMode});
+    } on PlatformException catch (_) {}
+  }
+
+  /// Opens the system screen to enable Genet as Device Admin.
+  static Future<void> enableDeviceAdmin() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod('enableDeviceAdmin');
+    } on PlatformException catch (_) {}
+  }
+
+  static Future<bool> getIsDeviceAdminEnabled() async {
+    if (!Platform.isAndroid) return false;
+    try {
+      final r = await _channel.invokeMethod<bool>('getIsDeviceAdminEnabled');
+      return r ?? false;
+    } on PlatformException catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> openBatteryOptimizationSettings() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod('openBatteryOptimizationSettings');
+    } on PlatformException catch (_) {}
+  }
+
+  static Future<bool> isIgnoringBatteryOptimizations() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      final r = await _channel.invokeMethod<bool>('isIgnoringBatteryOptimizations');
+      return r ?? true;
+    } on PlatformException catch (_) {
+      return true;
+    }
+  }
+
   static Future<List<String>> getMissingPermissions() async {
     if (!Platform.isAndroid) return [];
     try {
@@ -104,11 +175,33 @@ class GenetConfig {
     }
   }
 
+  /// Called when app is brought to foreground after native requested permission recovery (blocked app opened, permissions missing). Returns true once then clears.
+  static Future<bool> shouldShowPermissionRecovery() async {
+    if (!Platform.isAndroid) return false;
+    try {
+      final r = await _channel.invokeMethod<bool>('shouldShowPermissionRecovery');
+      return r ?? false;
+    } on PlatformException catch (_) {
+      return false;
+    }
+  }
+
   static Future<void> setMaintenanceWindowEnd(int endMs) async {
     if (!Platform.isAndroid) return;
     try {
       await _channel.invokeMethod('setMaintenanceWindowEnd', {'endMs': endMs});
     } on PlatformException catch (_) {}
+  }
+
+  /// Current app package name (Genet). Used so Genet is never added to blocked list.
+  static Future<String> getPackageName() async {
+    if (!Platform.isAndroid) return '';
+    try {
+      final r = await _channel.invokeMethod<String>('getPackageName');
+      return r ?? '';
+    } on PlatformException catch (_) {
+      return '';
+    }
   }
 
   /// Sync map of packageName -> untilMs (extension approved until) to native so blocked app is allowed until that time.

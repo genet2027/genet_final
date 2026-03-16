@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../repositories/children_repository.dart';
+
 /// מקור נתונים משותף לבקשות הארכה – מסך הילד שולח, מסך ההורה מאשר/דוחה.
 const String kExtensionRequestsKey = 'genet_extension_requests';
 const String kExtensionApprovedUntilKey = 'genet_extension_approved_until';
@@ -29,7 +31,11 @@ Future<void> saveExtensionRequests(List<ExtensionRequest> list) async {
   await prefs.setString(kExtensionRequestsKey, jsonEncode(list.map((e) => e.toJson()).toList()));
 }
 
-Future<Map<String, int>> getExtensionApprovedUntil() async {
+/// Extension approved-until per child. Use this instead of legacy global getter.
+Future<Map<String, int>> getExtensionApprovedUntil([String? childId]) async {
+  if (childId != null && childId.isNotEmpty) {
+    return getExtensionApprovedForChild(childId);
+  }
   final prefs = await SharedPreferences.getInstance();
   final raw = prefs.getString(kExtensionApprovedUntilKey);
   if (raw == null || raw.isEmpty) return {};
@@ -41,7 +47,12 @@ Future<Map<String, int>> getExtensionApprovedUntil() async {
   }
 }
 
-Future<void> saveExtensionApprovedUntil(Map<String, int> map) async {
+/// Save extension approved-until for a specific child.
+Future<void> saveExtensionApprovedUntil(Map<String, int> map, [String? childId]) async {
+  if (childId != null && childId.isNotEmpty) {
+    await setExtensionApprovedForChild(childId, map);
+    return;
+  }
   final prefs = await SharedPreferences.getInstance();
   await prefs.setString(kExtensionApprovedUntilKey, jsonEncode(map));
 }
@@ -54,6 +65,10 @@ class ExtensionRequest {
     required this.minutes,
     required this.status,
     required this.requestedAt,
+    this.childId = '',
+    this.childName = '',
+    this.childFirstName = '',
+    this.childLastName = '',
   });
 
   final String id;
@@ -62,6 +77,17 @@ class ExtensionRequest {
   final int minutes;
   final String status;
   final int requestedAt;
+  final String childId;
+  final String childName;
+  final String childFirstName;
+  final String childLastName;
+
+  String get childDisplayName {
+    if (childFirstName.isNotEmpty || childLastName.isNotEmpty) {
+      return [childFirstName, childLastName].join(' ').trim();
+    }
+    return childName;
+  }
 
   factory ExtensionRequest.fromJson(Map<String, dynamic> json) {
     return ExtensionRequest(
@@ -71,6 +97,10 @@ class ExtensionRequest {
       minutes: (json['minutes'] as num?)?.toInt() ?? 0,
       status: json['status'] as String? ?? ExtensionRequestStatus.pending,
       requestedAt: (json['requestedAt'] as num?)?.toInt() ?? 0,
+      childId: json['childId'] as String? ?? '',
+      childName: json['childName'] as String? ?? '',
+      childFirstName: json['childFirstName'] as String? ?? '',
+      childLastName: json['childLastName'] as String? ?? '',
     );
   }
 
@@ -81,6 +111,10 @@ class ExtensionRequest {
         'minutes': minutes,
         'status': status,
         'requestedAt': requestedAt,
+        'childId': childId,
+        'childName': childName,
+        'childFirstName': childFirstName,
+        'childLastName': childLastName,
       };
 
   ExtensionRequest copyWith({String? status}) => ExtensionRequest(
@@ -90,5 +124,9 @@ class ExtensionRequest {
         minutes: minutes,
         status: status ?? this.status,
         requestedAt: requestedAt,
+        childId: childId,
+        childName: childName,
+        childFirstName: childFirstName,
+        childLastName: childLastName,
       );
 }

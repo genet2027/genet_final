@@ -1,5 +1,7 @@
 package com.example.genet_final
 
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -19,6 +21,11 @@ import java.io.ByteArrayOutputStream
 class MainActivity : FlutterActivity() {
 
     private val CHANNEL = "com.example.genet_final/config"
+
+    companion object {
+        const val EXTRA_SHOW_PERMISSION_RECOVERY = "show_permission_recovery"
+        @Volatile var pendingPermissionRecovery = false
+    }
 
     /**
      * Initial route sent to Flutter. Use "/content-library" to open Content Library (ספריית תכנים)
@@ -46,10 +53,11 @@ class MainActivity : FlutterActivity() {
                 }
                 "setBlockedApps", "setBlockedPackages" -> {
                     val list = call.argument<List<String>>("packages") ?: emptyList()
-                    val first3 = list.take(3).joinToString(",")
-                    android.util.Log.d("GENET", "setBlockedPackages received size=${list.size} packages=$first3")
-                    getGenetPrefs().edit().putString(GenetAccessibilityService.KEY_BLOCKED_APPS, JSONArray(list).toString()).apply()
-                    GenetAccessibilityService.updateBlockedPackages(list)
+                    val filtered = list.filter { it != packageName }
+                    val first3 = filtered.take(3).joinToString(",")
+                    android.util.Log.d("GENET", "setBlockedPackages received size=${filtered.size} packages=$first3")
+                    getGenetPrefs().edit().putString(GenetAccessibilityService.KEY_BLOCKED_APPS, JSONArray(filtered).toString()).apply()
+                    GenetAccessibilityService.updateBlockedPackages(filtered)
                     sendBroadcast(android.content.Intent(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
                     result.success(null)
                 }
@@ -112,9 +120,10 @@ class MainActivity : FlutterActivity() {
                     }
                     result.success(null)
                 }
-                "isAccessibilityServiceEnabled" -> result.success(isAccessibilityServiceEnabled())
-                "getMissingPermissions" -> result.success(getMissingPermissions())
+                "isAccessibilityServiceEnabled" -> result.success(PermissionChecker.isAccessibilityServiceEnabled(this))
+                "getMissingPermissions" -> result.success(PermissionChecker.getMissingPermissions(this))
                 "getInitialRoute" -> result.success(getInitialRoute())
+                "getPackageName" -> result.success(packageName)
                 "getInstalledApps" -> {
                     try {
                         result.success(getInstalledApps())
@@ -123,9 +132,48 @@ class MainActivity : FlutterActivity() {
                         result.success(emptyList<Map<String, Any>>())
                     }
                 }
+                "shouldShowPermissionRecovery" -> {
+                    val show = pendingPermissionRecovery
+                    pendingPermissionRecovery = false
+                    result.success(show)
+                }
+                "enableDeviceAdmin" -> {
+                    enableDeviceAdmin()
+                    result.success(null)
+                }
+                "setChildMode" -> {
+                    val isChildMode = call.argument<Boolean>("isChildMode") ?: false
+                    getGenetPrefs().edit().putBoolean(GenetAccessibilityService.KEY_IS_CHILD_MODE, isChildMode).apply()
+                    result.success(null)
+                }
+                "getIsDeviceAdminEnabled" -> result.success(isDeviceAdminEnabled())
+                "openBatteryOptimizationSettings" -> {
+                    openBatteryOptimizationSettings()
+                    result.success(null)
+                }
+                "isIgnoringBatteryOptimizations" -> result.success(isIgnoringBatteryOptimizations())
                 else -> result.notImplemented()
             }
         }
+    }
+
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (intent?.getBooleanExtra(EXTRA_SHOW_PERMISSION_RECOVERY, false) == true) pendingPermissionRecovery = true
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Post-reboot protection: if boot receiver set flag (child mode + incomplete protection), show parent lock until PIN
+        if (getGenetPrefs().getBoolean(GenetAccessibilityService.KEY_REQUIRE_PARENT_UNLOCK_AFTER_REBOOT, false)) {
+            startActivity(Intent(this, RebootLockActivity::class.java))
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_SHOW_PERMISSION_RECOVERY, false)) pendingPermissionRecovery = true
     }
 
     private fun appendReportEvent(packageName: String, timestamp: Long, type: String) {
@@ -138,34 +186,39 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {}
     }
 
-    private fun isAccessibilityServiceEnabled(): Boolean {
-        val serviceName = "${packageName}/${GenetAccessibilityService::class.java.canonicalName}"
-        val enabledList = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
-        val accessibilityOn = Settings.Secure.getInt(contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 0) == 1
-        if (!accessibilityOn) return false
-        return enabledList.split(":").any { it.equals(serviceName, ignoreCase = true) }
+    private fun getGenetPrefs() = getSharedPreferences(GenetAccessibilityService.PREFS_NAME, MODE_PRIVATE)
+
+    /** Opens the system screen to enable Genet as Device Admin. */
+    private fun enableDeviceAdmin() {
+        val componentName = ComponentName(this, GenetDeviceAdminReceiver::class.java)
+        val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+            putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, componentName)
+        }
+        startActivity(intent)
     }
 
-    /** מחזיר רשימת הרשאות חסרות: "accessibility", "usage", "overlay" — לשימוש לפני הפעלת חסימה. */
-    private fun getMissingPermissions(): List<String> {
-        val missing = mutableListOf<String>()
-        if (!isAccessibilityServiceEnabled()) missing.add("accessibility")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) missing.add("overlay")
-        if (!hasUsageAccess()) missing.add("usage")
-        return missing
+    private fun isDeviceAdminEnabled(): Boolean {
+        val dpm = getSystemService(android.content.Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager ?: return false
+        val cn = ComponentName(this, GenetDeviceAdminReceiver::class.java)
+        return dpm.isAdminActive(cn)
     }
 
-    private fun hasUsageAccess(): Boolean {
-        return try {
-            val um = getSystemService(android.content.Context.USAGE_STATS_SERVICE) as android.app.usage.UsageStatsManager
-            um.queryUsageStats(android.app.usage.UsageStatsManager.INTERVAL_DAILY, System.currentTimeMillis() - 60000, System.currentTimeMillis())
-            true
-        } catch (e: SecurityException) {
-            false
+    private fun openBatteryOptimizationSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            try { startActivity(intent) } catch (_: Exception) {}
         }
     }
 
-    private fun getGenetPrefs() = getSharedPreferences(GenetAccessibilityService.PREFS_NAME, MODE_PRIVATE)
+    private fun isIgnoringBatteryOptimizations(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager ?: return true
+            return pm.isIgnoringBatteryOptimizations(packageName)
+        }
+        return true
+    }
 
     /** אפליקציות עם Launcher (ניתנות לפתיחה מה-home). מחזיר name, package, icon (Base64). */
     private fun getInstalledApps(): List<Map<String, Any>> {

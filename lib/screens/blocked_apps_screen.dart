@@ -3,13 +3,14 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/config/genet_config.dart';
 import '../core/extension_requests.dart';
+import '../models/child_entity.dart';
+import '../repositories/children_repository.dart';
+import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
 
-const String _kBlockedPackagesKey = 'genet_blocked_packages';
 const MethodChannel _channel = MethodChannel('com.example.genet_final/config');
 
 String _formatRemainingParent(int totalSeconds) {
@@ -30,49 +31,70 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
   List<Map<String, dynamic>> _installedApps = [];
   final List<String> _blockedPackages = [];
   List<ExtensionRequest> _extensionRequests = [];
+  List<ChildEntity> _children = [];
   Map<String, int> _approvedUntil = {};
   bool _loading = true;
+  String? _selectedChildId;
+  String? _parentId;
   Timer? _extensionTimer;
+  StreamSubscription<Map<String, dynamic>?>? _childDocSub;
 
   @override
   void initState() {
     super.initState();
     _loadAll();
     _extensionTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
-      final map = await getExtensionApprovedUntil();
+      final sid = _selectedChildId;
+      final map = await getExtensionApprovedUntil(sid);
       if (mounted) setState(() => _approvedUntil = map);
+    });
+  }
+
+  void _listenToChildDoc() {
+    _childDocSub?.cancel();
+    final parentId = _parentId;
+    final childId = _selectedChildId;
+    if (parentId == null || childId == null) return;
+    _childDocSub = watchParentChildDocStream(parentId, childId).listen((_) {
+      if (mounted) {
+        _loadExtensionRequests();
+        _loadApprovedUntil();
+        setState(() {});
+      }
     });
   }
 
   @override
   void dispose() {
     _extensionTimer?.cancel();
+    _childDocSub?.cancel();
     super.dispose();
   }
 
   Future<void> _loadAll() async {
+    _selectedChildId = await getSelectedChildId();
+    _parentId = await getParentId();
+    _children = await getChildren();
     await _loadBlocked();
     await _loadInstalledApps();
     await _loadExtensionRequests();
     await _loadApprovedUntil();
+    if (mounted) _listenToChildDoc();
   }
 
   Future<void> _loadApprovedUntil() async {
-    final map = await getExtensionApprovedUntil();
+    final map = await getExtensionApprovedUntil(_selectedChildId);
     if (mounted) setState(() => _approvedUntil = map);
   }
 
   Future<void> _loadBlocked() async {
-    final prefs = await SharedPreferences.getInstance();
-    var list = prefs.getStringList(_kBlockedPackagesKey) ?? [];
-    if (list.isEmpty) {
-      final legacy = prefs.getStringList('genet_blocked_apps') ?? [];
-      if (legacy.isNotEmpty) {
-        await prefs.setStringList(_kBlockedPackagesKey, legacy);
-        await GenetConfig.setBlockedApps(legacy);
-        list = legacy;
-      }
+    final sid = _selectedChildId;
+    var list = <String>[];
+    if (sid != null && sid.isNotEmpty) {
+      list = await getBlockedPackagesForChild(sid);
     }
+    final genetPkg = await GenetConfig.getPackageName();
+    if (genetPkg.isNotEmpty) list = list.where((p) => p != genetPkg).toList();
     if (mounted) {
       setState(
         () => _blockedPackages
@@ -111,12 +133,19 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
   }
 
   Future<void> _saveBlocked() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(_kBlockedPackagesKey, _blockedPackages);
-    await GenetConfig.setBlockedApps(_blockedPackages);
+    final sid = _selectedChildId;
+    final parentId = _parentId;
+    if (sid == null || sid.isEmpty) return;
+    await setBlockedPackagesForChild(sid, _blockedPackages);
+    if (parentId != null) {
+      await syncBlockedPackagesToFirebase(parentId, sid, _blockedPackages);
+    }
   }
 
-  void _toggleBlock(String packageName) {
+  Future<void> _toggleBlock(String packageName) async {
+    if (_selectedChildId == null || _selectedChildId!.isEmpty) return;
+    final genetPkg = await GenetConfig.getPackageName();
+    if (genetPkg.isNotEmpty && packageName == genetPkg) return;
     setState(() {
       if (_blockedPackages.contains(packageName)) {
         _blockedPackages.remove(packageName);
@@ -128,33 +157,58 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
   }
 
   Future<void> _approveRequest(ExtensionRequest req) async {
+    final childId = req.childId.isNotEmpty ? req.childId : _selectedChildId;
+    final parentId = _parentId;
+    if (childId == null || childId.isEmpty) return;
     final untilMs =
         DateTime.now().millisecondsSinceEpoch + req.minutes * 60 * 1000;
-    final map = await getExtensionApprovedUntil();
+    final map = await getExtensionApprovedUntil(childId);
     map[req.packageName] = untilMs;
-    await saveExtensionApprovedUntil(map);
-    await GenetConfig.setExtensionApproved(map);
+    await saveExtensionApprovedUntil(map, childId);
     final list = await getExtensionRequests();
     final idx = list.indexWhere((e) => e.id == req.id);
     if (idx >= 0)
       list[idx] = list[idx].copyWith(status: ExtensionRequestStatus.approved);
     await saveExtensionRequests(list);
+    if (parentId != null) {
+      await updateExtensionRequestInFirebase(
+        parentId,
+        childId,
+        req.id,
+        ExtensionRequestStatus.approved,
+        approvedUntilMs: untilMs,
+        packageName: req.packageName,
+      );
+    }
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${req.appName} אושר זמנית ל־${req.minutes} דקות'),
+          content: Text(
+            '${req.childDisplayName.isNotEmpty ? "${req.childDisplayName} – " : ""}${req.appName} אושר זמנית ל־${req.minutes} דקות',
+          ),
         ),
       );
       _loadExtensionRequests();
+      _loadApprovedUntil();
     }
   }
 
   Future<void> _rejectRequest(ExtensionRequest req) async {
+    final childId = req.childId.isNotEmpty ? req.childId : _selectedChildId;
+    final parentId = _parentId;
     final list = await getExtensionRequests();
     final idx = list.indexWhere((e) => e.id == req.id);
     if (idx >= 0)
       list[idx] = list[idx].copyWith(status: ExtensionRequestStatus.rejected);
     await saveExtensionRequests(list);
+    if (parentId != null && childId != null) {
+      await updateExtensionRequestInFirebase(
+        parentId,
+        childId,
+        req.id,
+        ExtensionRequestStatus.rejected,
+      );
+    }
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('בקשת הארכה ל־${req.appName} נדחתה')),
@@ -164,10 +218,15 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
   }
 
   Future<void> _cancelExtension(String packageName) async {
-    final map = await getExtensionApprovedUntil();
+    final sid = _selectedChildId;
+    final parentId = _parentId;
+    if (sid == null || sid.isEmpty) return;
+    final map = await getExtensionApprovedUntil(sid);
     map.remove(packageName);
-    await saveExtensionApprovedUntil(map);
-    await GenetConfig.setExtensionApproved(map);
+    await saveExtensionApprovedUntil(map, sid);
+    if (parentId != null) {
+      await cancelExtensionInFirebase(parentId, sid, packageName);
+    }
     if (mounted) {
       setState(() => _approvedUntil = Map.from(map));
       ScaffoldMessenger.of(context).showSnackBar(
@@ -184,13 +243,21 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
     return ((untilMs - now) / 1000).floor();
   }
 
+  Set<String> get _currentChildIds =>
+      _children.map((c) => c.childId).toSet();
+
   @override
   Widget build(BuildContext context) {
+    final childIds = _currentChildIds;
     final pendingRequests = _extensionRequests
-        .where((r) => r.status == ExtensionRequestStatus.pending)
+        .where((r) =>
+            r.status == ExtensionRequestStatus.pending &&
+            (r.childId.isEmpty ? (_selectedChildId != null && childIds.contains(_selectedChildId)) : childIds.contains(r.childId)))
         .toList();
     final otherRequests = _extensionRequests
-        .where((r) => r.status != ExtensionRequestStatus.pending)
+        .where((r) =>
+            r.status != ExtensionRequestStatus.pending &&
+            (r.childId.isEmpty ? (_selectedChildId != null && childIds.contains(_selectedChildId)) : childIds.contains(r.childId)))
         .toList();
 
     return Scaffold(
@@ -213,6 +280,20 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                if (_selectedChildId == null || _selectedChildId!.isEmpty) ...[
+                  Card(
+                    color: Colors.amber.shade50,
+                    child: const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text(
+                        'נא לבחור ילד במסך "ילדים" כדי לנהל חסימות ובקשות הארכה.',
+                        textDirection: TextDirection.rtl,
+                        style: TextStyle(fontSize: 14),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 const Text(
                   'בקשות הארכה',
                   style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
@@ -240,6 +321,14 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
+                                  if (req.childDisplayName.isNotEmpty)
+                                    Text(
+                                      req.childDisplayName,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey.shade700,
+                                      ),
+                                    ),
                                   Text(
                                     req.appName,
                                     style: const TextStyle(
@@ -300,7 +389,7 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
                                 children: [
                                   Expanded(
                                     child: Text(
-                                      '${req.appName} – ${req.minutes} דקות',
+                                      '${req.childDisplayName.isNotEmpty ? "${req.childDisplayName} – " : ""}${req.appName} – ${req.minutes} דקות',
                                       style: const TextStyle(fontSize: 14),
                                     ),
                                   ),
@@ -325,6 +414,7 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
                         ),
                   ],
                 ],
+                if (_selectedChildId != null && _selectedChildId!.isNotEmpty) ...[
                 const SizedBox(height: 24),
                 Text(
                   'בחר את האפליקציות שתיחסמנה',
@@ -374,7 +464,7 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
                                     minimumSize: Size.zero,
                                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                   ),
-                                  child: const Text('בטל הארכת זמן'),
+                                  child: const Text('ביטול הארכה'),
                                 ),
                               ],
                             ),
@@ -388,6 +478,7 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
                   'הערה: חסימת אפליקציות בפועל דורשת הרשאות מערכת Android.',
                   style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
                 ),
+                ],
               ],
             ),
     );

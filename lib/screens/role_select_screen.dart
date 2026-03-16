@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../core/config/genet_config.dart';
 import '../l10n/app_localizations.dart';
+import '../repositories/children_repository.dart';
 import '../theme/app_theme.dart';
 import '../widgets/language_switcher.dart';
 import 'child_home_screen.dart';
+import 'child_self_identify_screen.dart';
 import 'pin_login_screen.dart';
 
 /// מסך בחירת תפקיד: הורה או ילד. כניסה ראשית לאפליקציה.
@@ -45,6 +48,7 @@ class RoleSelectScreen extends StatelessWidget {
                   width: double.infinity,
                   child: ElevatedButton(
                     onPressed: () {
+                      GenetConfig.setChildMode(false);
                       Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -63,12 +67,28 @@ class RoleSelectScreen extends StatelessWidget {
                 const SizedBox(height: 16),
                 SizedBox(
                   width: double.infinity,
-                  child: OutlinedButton(
-                    onPressed: () {
+                    child: OutlinedButton(
+                    onPressed: () async {
+                      GenetConfig.setChildMode(true);
+                      final linkedId = await getLinkedChildId();
+                      if (linkedId != null && linkedId.isNotEmpty) {
+                        if (!context.mounted) return;
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const ChildHomeScreen(),
+                          ),
+                        );
+                        return;
+                      }
+                      final hasProfile = await hasChildSelfProfile();
+                      if (!context.mounted) return;
                       Navigator.pushReplacement(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => const ChildHomeScreen(),
+                          builder: (context) => hasProfile
+                              ? const ChildHomeScreen()
+                              : const ChildSelfIdentifyScreen(),
                         ),
                       );
                     },

@@ -3,4 +3,5 @@
     <string name="app_name">Genet</string>
     <string name="accessibility_service_description">Genet uses this to monitor which apps are opened so it can enforce parental controls and Sleep Lock Mode.</string>
     <string name="lock_wrong_pin">קוד PIN שגוי</string>
+    <string name="device_admin_description">Genet Device Admin – להגנה על האפליקציה והרשאות.</string>
 </resources>
