@@ -4,11 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../core/extension_requests.dart';
-import '../core/user_role.dart';
-import '../repositories/children_repository.dart';
-import '../repositories/parent_child_sync_repository.dart';
-import '../theme/app_theme.dart';
+import '../../core/extension_requests.dart';
+import '../../core/user_role.dart';
+import '../../repositories/children_repository.dart';
+import '../../repositories/parent_child_sync_repository.dart';
+import '../../theme/app_theme.dart';
 
 const String _kSleepLockEnabledKey = 'genet_sleep_lock_enabled';
 const String _kSleepLockStartKey = 'genet_sleep_lock_start';

@@ -1,26 +1,27 @@
 import 'dart:async';
 import 'dart:developer' as developer;
-import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../core/config/genet_config.dart';
-import '../core/genet_vpn.dart';
-import '../core/user_role.dart';
-import '../core/vpn_remote_child.dart';
-import '../l10n/app_localizations.dart';
-import '../models/child_model.dart';
-import '../repositories/children_repository.dart';
-import '../repositories/parent_child_sync_repository.dart';
-import '../services/night_mode_service.dart';
-import '../theme/app_theme.dart';
-import '../widgets/language_switcher.dart';
-import 'blocked_apps_times_screen.dart';
+import '../../core/config/genet_config.dart';
+import '../../core/user_role.dart';
+import '../../l10n/app_localizations.dart';
+import '../../models/child_model.dart';
+import '../../repositories/children_repository.dart';
+import '../../repositories/parent_child_sync_repository.dart';
+import '../../services/night_mode_service.dart';
+import '../../theme/app_theme.dart';
+import '../../widgets/language_switcher.dart';
+import '../parent/blocked_apps_times_screen.dart';
 import 'child_link_screen.dart';
-import 'content_library_screen.dart';
-import 'role_select_screen.dart';
-import 'school_schedule_screen.dart';
+import '../content_library_screen.dart';
+import '../common/night_screen.dart';
+import '../common/role_select_screen.dart';
+import '../common/school_schedule_screen.dart';
+
+/// Route name for [NightScreen] — used to pop only this overlay when night ends.
+const String kGenetNightScreenRouteName = 'genet_night_screen';
 
 /// Child home: connection status from Firebase only. When parent disconnects, UI updates in place.
 class ChildHomeScreen extends StatefulWidget {
@@ -30,90 +31,26 @@ class ChildHomeScreen extends StatefulWidget {
   State<ChildHomeScreen> createState() => _ChildHomeScreenState();
 }
 
-class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingObserver {
+class _ChildHomeScreenState extends State<ChildHomeScreen> {
   StreamSubscription<SyncedChildData?>? _firebaseSyncSub;
-  StreamSubscription<Map<String, dynamic>?>? _sleepLockSub;
 
   /// Single source of truth from Firebase: true = connected, false = disconnected, null = loading
   bool? _firebaseConnectionStatus;
   String? _linkedNameForDisplay;
 
-  /// Timer: keep native prefs in sync when sleep window crosses (enforcement is native overlay only).
+  /// Prevents repeated [Navigator.push] / [Navigator.pop] while night window is active (Timer / rebuilds).
+  bool _isNightScreenShown = false;
   Timer? _nightCheckTimer;
-
-  /// Re-apply VPN when extension windows start/end without waiting for the next Firestore write.
-  Timer? _extensionVpnTimer;
-  bool _extensionActiveLastTick = false;
-
-  /// Remote VPN policy snapshot (child device only).
-  SyncedChildData? _lastSyncedForVpn;
-  bool? _vpnPermissionGranted;
-  bool? _vpnRunningOnDevice;
-  /// on | off | error — from [VpnRemoteChildPolicy.apply]
-  String _vpnIndicatorStatus = 'off';
-
-  /// Skip [setState] when visible VPN/UI fields unchanged.
-  String? _lastChildHomeUiFingerprint;
-
-  String _childHomeUiFingerprint({
-    required SyncedChildData data,
-    required String? name,
-    required bool? perm,
-    required bool? run,
-    required String dot,
-  }) {
-    final sorted = List<String>.from(data.blockedPackages)..sort();
-    final extKeys = data.extensionApproved.keys.toList()..sort();
-    final ext = extKeys.map((k) => '$k:${data.extensionApproved[k]}').join('|');
-    return '${data.connectionStatus}|${data.parentId}|${data.vpnEnabled}|${sorted.join(',')}|'
-        '${data.vpnStatus}|${data.extensionRequests.length}|$ext|$name|${perm}_$run|$dot';
-  }
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _startFirebaseConnectionListener();
-    _startSleepLockRemoteListener();
-    // Native-only night/sleep enforcement (no in-app NightScreen). Child role only.
+    // Night overlay + timer: child role only (parent device must never show enforcement UI).
     getUserRole().then((role) {
       if (!mounted || role != kUserRoleChild) return;
-      _nightCheckTimer = Timer.periodic(const Duration(seconds: 10), (_) => _syncNightScreen());
+      _nightCheckTimer = Timer.periodic(const Duration(seconds: 20), (_) => _syncNightScreen());
       WidgetsBinding.instance.addPostFrameCallback((_) => _syncNightScreen());
-      if (Platform.isAndroid) {
-        _extensionVpnTimer = Timer.periodic(
-          const Duration(seconds: 1),
-          (_) => _tickExtensionVpnWindows(),
-        );
-      }
-    });
-  }
-
-  void _tickExtensionVpnWindows() {
-    if (!mounted) return;
-    getUserRole().then((role) async {
-      if (!mounted || role != kUserRoleChild || !Platform.isAndroid) return;
-      final d = _lastSyncedForVpn;
-      if (d == null || !d.vpnEnabled || d.blockedPackages.isEmpty) return;
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final anyActive =
-          d.extensionApproved.entries.any((e) => (e.value) > now);
-      if (!anyActive && !_extensionActiveLastTick) return;
-      _extensionActiveLastTick = anyActive;
-      final vpnDot = await VpnRemoteChildPolicy.apply(d);
-      if (!mounted) return;
-      final g = await GenetVpn.isVpnPermissionGranted();
-      final run = await GenetVpn.isVpnRunning();
-      if (!mounted) return;
-      if (vpnDot != _vpnIndicatorStatus ||
-          g != _vpnPermissionGranted ||
-          run != _vpnRunningOnDevice) {
-        setState(() {
-          _vpnIndicatorStatus = vpnDot;
-          _vpnPermissionGranted = g;
-          _vpnRunningOnDevice = run;
-        });
-      }
     });
   }
 
@@ -122,100 +59,42 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     // Child home is only for child flow; guard so no Timer/Navigator runs without child role.
     getUserRole().then((role) {
       if (!mounted || role != kUserRoleChild) return;
-      _syncNightNativeOnly();
+      _syncNightScreenImpl();
     });
   }
 
-  /// Remote Sleep Lock from Firebase → prefs + [NightModeService] → native (child device only).
-  void _startSleepLockRemoteListener() {
-    getLinkedChildId().then((cid) {
-      if (!mounted || cid == null || cid.isEmpty) return;
-      developer.log(
-        'SLEEP_LOCK child listen childId=$cid path=child_settings/$cid/sleep_lock/settings',
-        name: 'Sync',
-      );
-      _sleepLockSub = watchChildSleepLockStream(cid).listen((data) async {
-        await _applySleepLockSnapshot(data);
-      });
-    });
-  }
-
-  /// Same time-window logic as [NightModeService.isNightTimeNow] but without requiring `enabled`.
-  bool _sleepLockTimeInRange(String startTime, String endTime) {
-    final now = DateTime.now();
-    final start = _parseTimeParts(startTime);
-    final end = _parseTimeParts(endTime);
-    final nowMinutes = now.hour * 60 + now.minute;
-    final startMinutes = start.$1 * 60 + start.$2;
-    final endMinutes = end.$1 * 60 + end.$2;
-    if (startMinutes > endMinutes) {
-      return nowMinutes >= startMinutes || nowMinutes < endMinutes;
-    }
-    return nowMinutes >= startMinutes && nowMinutes < endMinutes;
-  }
-
-  (int, int) _parseTimeParts(String s) {
-    final parts = s.split(':');
-    final h = parts.isNotEmpty ? int.tryParse(parts[0]) ?? 0 : 0;
-    final m = parts.length > 1 ? int.tryParse(parts[1]) ?? 0 : 0;
-    return (h, m);
-  }
-
-  /// Applies remote sleep lock to prefs/native (enforcement is Android-only, no in-app overlay).
-  Future<void> _applySleepLockSnapshot(Map<String, dynamic>? data) async {
-    if (!mounted || data == null) return;
-    // ignore: avoid_print
-    print('SLEEP LOCK RECEIVED: $data');
-    final now = DateTime.now();
-    // ignore: avoid_print
-    print(
-      'CURRENT TIME: ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}',
-    );
-    final isActive = data['isActive'] as bool? ?? false;
-    final startTime = data['startTime'] as String? ?? '22:00';
-    final endTime = data['endTime'] as String? ?? '07:00';
-    final isInRange = isActive && _sleepLockTimeInRange(startTime, endTime);
-    // ignore: avoid_print
-    print('IS IN RANGE: $isInRange');
+  void _syncNightScreenImpl() {
     if (!mounted) return;
     final night = context.read<NightModeService>();
-    if (!night.isLoaded) await night.load();
-    if (!mounted) return;
-    await night.saveConfig(
-      night.config.copyWith(
-        enabled: isActive,
-        startTime: startTime,
-        endTime: endTime,
-      ),
-    );
-    developer.log(
-      'SLEEP_LOCK child applied isActive=$isActive start=$startTime end=$endTime lockActive=$isActive',
-      name: 'Sync',
-    );
-    await GenetConfig.syncToNativeAfterRemoteChildDoc();
-    if (isActive && isInRange) {
-      // ignore: avoid_print
-      print('LOCK ACTIVATED');
-    } else {
-      // ignore: avoid_print
-      print('LOCK DISABLED');
-    }
-    if (!mounted) return;
-    setState(() {});
-    _syncNightNativeOnly();
-  }
+    if (!night.isLoaded) return;
+    final isNightTime = night.config.enabled && night.isNightTimeNow();
 
-  /// Sleep / night lock is enforced only by Android (Accessibility overlay), never via in-app [Navigator] routes.
-  void _syncNightNativeOnly() {
-    if (!mounted) return;
-    final night = context.read<NightModeService>();
-    if (!night.isLoaded) {
-      night.load().then((_) {
-        if (mounted) _syncNightNativeOnly();
+    if (isNightTime && !_isNightScreenShown) {
+      _isNightScreenShown = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final nav = Navigator.of(context);
+        if (!nav.mounted) return;
+        nav.push<void>(
+          MaterialPageRoute<void>(
+            settings: const RouteSettings(name: kGenetNightScreenRouteName),
+            fullscreenDialog: true,
+            builder: (_) => const NightScreen(),
+          ),
+        );
       });
       return;
     }
-    GenetConfig.syncToNativeAfterRemoteChildDoc();
+
+    if (!isNightTime && _isNightScreenShown) {
+      _isNightScreenShown = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final nav = Navigator.of(context);
+        if (!nav.mounted) return;
+        nav.popUntil((route) => route.settings.name != kGenetNightScreenRouteName);
+      });
+    }
   }
 
   Future<void> _startFirebaseConnectionListener() async {
@@ -249,47 +128,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
       if (isConnected) {
         developer.log('Child connected (from Firebase)', name: 'Sync');
         final name = await getLinkedChildName();
-        if (role == kUserRoleChild && Platform.isAndroid) {
-          final oldVpn = _lastSyncedForVpn?.vpnEnabled;
-          final oldBlocked = _lastSyncedForVpn?.blockedPackages;
-          debugPrint('[GenetVpn] child realtime listener fired');
-          debugPrint('[GenetVpn] old vpnEnabled=$oldVpn new vpnEnabled=${data.vpnEnabled}');
-          if (oldBlocked != null) {
-            final a = List<String>.from(oldBlocked)..sort();
-            final b = List<String>.from(data.blockedPackages)..sort();
-            if (a.join(',') != b.join(',')) {
-              debugPrint('[GenetVpn] blockedApps changed -> refreshVpn if VPN running');
-            }
-          }
-          final vpnDot = await VpnRemoteChildPolicy.apply(data);
-          final g = await GenetVpn.isVpnPermissionGranted();
-          final run = await GenetVpn.isVpnRunning();
-          if (!mounted) return;
-          final uiFp = _childHomeUiFingerprint(
-            data: data,
-            name: name,
-            perm: g,
-            run: run,
-            dot: vpnDot,
-          );
-          if (uiFp == _lastChildHomeUiFingerprint) {
-            debugPrint('[GenetVpn] skipped duplicate setState');
-            _lastSyncedForVpn = data;
-            return;
-          }
-          _lastChildHomeUiFingerprint = uiFp;
-          if (_vpnIndicatorStatus != vpnDot) {
-            debugPrint('[GenetVpn] vpnStatus changed from $_vpnIndicatorStatus to $vpnDot');
-          }
-          setState(() {
-            _firebaseConnectionStatus = true;
-            _linkedNameForDisplay = name;
-            _lastSyncedForVpn = data;
-            _vpnPermissionGranted = g;
-            _vpnRunningOnDevice = run;
-            _vpnIndicatorStatus = vpnDot;
-          });
-        } else if (mounted) {
+        if (mounted) {
           setState(() {
             _firebaseConnectionStatus = true;
             _linkedNameForDisplay = name;
@@ -303,17 +142,6 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
   }
 
   Future<void> _handleDisconnected() async {
-    if (Platform.isAndroid) {
-      await GenetVpn.stopVpn();
-      debugPrint('[GenetVpn] child stopVpn triggered (disconnected from parent)');
-    }
-    VpnRemoteChildPolicy.resetPushDedupe();
-    _extensionVpnTimer?.cancel();
-    _extensionVpnTimer = null;
-    _extensionActiveLastTick = false;
-    _lastChildHomeUiFingerprint = null;
-    _sleepLockSub?.cancel();
-    _sleepLockSub = null;
     _firebaseSyncSub?.cancel();
     _firebaseSyncSub = null;
     await setLinkedChild(null, null);
@@ -322,10 +150,6 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     setState(() {
       _firebaseConnectionStatus = false;
       _linkedNameForDisplay = null;
-      _lastSyncedForVpn = null;
-      _vpnPermissionGranted = null;
-      _vpnRunningOnDevice = null;
-      _vpnIndicatorStatus = 'off';
     });
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -338,112 +162,13 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _nightCheckTimer?.cancel();
-    _extensionVpnTimer?.cancel();
-    _sleepLockSub?.cancel();
     _firebaseSyncSub?.cancel();
     super.dispose();
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _syncVpnAfterResume();
-    }
-  }
-
-  Future<void> _syncVpnAfterResume() async {
-    if (!mounted || !Platform.isAndroid) return;
-    final d = _lastSyncedForVpn;
-    if (d == null || !d.vpnEnabled) return;
-    final role = await getUserRole();
-    if (role != kUserRoleChild) return;
-    final vpnDot = await VpnRemoteChildPolicy.apply(d);
-    if (!mounted) return;
-    final g = await GenetVpn.isVpnPermissionGranted();
-    final run = await GenetVpn.isVpnRunning();
-    final name = await getLinkedChildName();
-    if (!mounted) return;
-    final uiFp = _childHomeUiFingerprint(data: d, name: name, perm: g, run: run, dot: vpnDot);
-    _lastChildHomeUiFingerprint = uiFp;
-    if (_vpnIndicatorStatus != vpnDot) {
-      debugPrint('[GenetVpn] vpnStatus changed from $_vpnIndicatorStatus to $vpnDot');
-    }
-    if (mounted) {
-      setState(() {
-        _vpnPermissionGranted = g;
-        _vpnRunningOnDevice = run;
-        _vpnIndicatorStatus = vpnDot;
-      });
-    }
-  }
-
-  String _vpnStatusTitle() {
-    final d = _lastSyncedForVpn;
-    if (d == null) return '…';
-    if (!d.vpnEnabled) return 'הגנת רשת: לא פעילה';
-    if (d.blockedPackages.isEmpty) return 'הגנת רשת: אין אפליקציות חסומות ברשימה';
-    final g = _vpnPermissionGranted == true;
-    final run = _vpnRunningOnDevice == true;
-    if (!g) return 'הגנת רשת לא אושרה';
-    if (run) return 'הגנת רשת פעילה';
-    return 'הגנת רשת מאושרת';
-  }
-
-  Future<void> _onApproveNetworkProtection() async {
-    final d = _lastSyncedForVpn;
-    if (d == null || !d.vpnEnabled || d.blockedPackages.isEmpty) return;
-    await GenetVpn.setBlockedApps(VpnRemoteChildPolicy.effectiveBlockedPackages(d));
-    if (await GenetVpn.isVpnPermissionGranted()) {
-      debugPrint('[GenetVpn] approval button: permission already granted, apply only (no startVpn for consent)');
-    } else {
-      final r = await GenetVpn.startVpn();
-      debugPrint('[GenetVpn] approval flow startVpn result=$r');
-    }
-    if (!mounted) return;
-    final vpnDot = await VpnRemoteChildPolicy.apply(d);
-    final g = await GenetVpn.isVpnPermissionGranted();
-    final run = await GenetVpn.isVpnRunning();
-    if (!mounted) return;
-    final name = await getLinkedChildName();
-    if (!mounted) return;
-    final uiFp = _childHomeUiFingerprint(data: d, name: name, perm: g, run: run, dot: vpnDot);
-    _lastChildHomeUiFingerprint = uiFp;
-    if (_vpnIndicatorStatus != vpnDot) {
-      debugPrint('[GenetVpn] vpnStatus changed from $_vpnIndicatorStatus to $vpnDot');
-    }
-    if (mounted) {
-      setState(() {
-        _vpnPermissionGranted = g;
-        _vpnRunningOnDevice = run;
-        _vpnIndicatorStatus = vpnDot;
-      });
-    }
-  }
-
-  Widget _buildVpnStatusDot(String status) {
-    final Color c;
-    switch (status) {
-      case 'on':
-        c = Colors.green;
-        break;
-      case 'error':
-        c = Colors.amber.shade700;
-        break;
-      default:
-        c = Colors.red;
-    }
-    return Container(
-      width: 12,
-      height: 12,
-      decoration: BoxDecoration(color: c, shape: BoxShape.circle),
-    );
-  }
-
-  @override
   Widget build(BuildContext context) {
-    debugPrint('[GenetVpn] child screen rebuild');
     final l10n = AppLocalizations.of(context)!;
 
     return Scaffold(
@@ -494,49 +219,8 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              if (isConnected && Platform.isAndroid) ...[
-                Card(
-                  elevation: 2,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          textDirection: TextDirection.rtl,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                _vpnStatusTitle(),
-                                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-                                textDirection: TextDirection.rtl,
-                              ),
-                            ),
-                            _buildVpnStatusDot(_vpnIndicatorStatus),
-                          ],
-                        ),
-                        if (_lastSyncedForVpn?.vpnEnabled == true &&
-                            (_vpnPermissionGranted != true) &&
-                            (_lastSyncedForVpn?.blockedPackages.isNotEmpty ?? false)) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            'יש לאשר הגנת רשת פעם אחת',
-                            style: TextStyle(fontSize: 14, color: Colors.grey.shade800),
-                            textDirection: TextDirection.rtl,
-                          ),
-                          const SizedBox(height: 12),
-                          FilledButton(
-                            onPressed: _onApproveNetworkProtection,
-                            child: const Text('אשר הגנת רשת'),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-              ],
+              const Text('Child Screen Loaded', style: TextStyle(fontSize: 12, color: Colors.grey)), // DEBUG: remove after verifying correct screen
+              const SizedBox(height: 8),
               if (isConnected) ...[
                 Card(
                   elevation: 2,

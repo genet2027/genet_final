@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 
-import '../core/config/genet_config.dart';
-import '../core/user_role.dart';
-import '../l10n/app_localizations.dart';
-import '../repositories/children_repository.dart';
-import '../theme/app_theme.dart';
-import '../widgets/language_switcher.dart';
-import 'child_home_screen.dart';
-import 'child_self_identify_screen.dart';
+import '../../core/config/genet_config.dart';
+import '../../core/user_role.dart';
+import '../../l10n/app_localizations.dart';
+import '../../repositories/children_repository.dart';
+import '../../theme/app_theme.dart';
+import '../../widgets/language_switcher.dart';
+import '../child_home_screen.dart';
+import '../child/child_self_identify_screen.dart';
 import 'pin_login_screen.dart';
 
 /// מסך בחירת תפקיד: הורה או ילד. כניסה ראשית לאפליקציה.

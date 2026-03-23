@@ -1,5 +1,6 @@
 package com.example.genet_final
 
+import android.app.Activity
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Intent
@@ -7,7 +8,9 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
 import android.net.Uri
+import android.net.VpnService
 import android.os.Build
+import androidx.core.content.ContextCompat
 import android.provider.Settings
 import android.util.Base64
 import android.util.Log
@@ -21,20 +24,88 @@ import java.io.ByteArrayOutputStream
 class MainActivity : FlutterActivity() {
 
     private val CHANNEL = "com.example.genet_final/config"
+    private val VPN_CHANNEL = "genet/vpn"
 
     companion object {
         const val EXTRA_SHOW_PERMISSION_RECOVERY = "show_permission_recovery"
         @Volatile var pendingPermissionRecovery = false
+        private const val REQUEST_VPN_PREPARE = 0x7103
     }
 
     /**
-     * Initial route sent to Flutter. Use "/content-library" to open Content Library (ספריית תכנים)
-     * on app launch; use null or "" for default (Role Select).
+     * Initial route sent to Flutter. Set to null for default behavior (Role Select).
      */
-    override fun getInitialRoute(): String? = "/content-library"
+    override fun getInitialRoute(): String? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        EnforcementBridge.register(flutterEngine.dartExecutor.binaryMessenger)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, VPN_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "setBlockedApps" -> {
+                    @Suppress("UNCHECKED_CAST")
+                    val list = call.argument<List<String>>("packages") ?: emptyList()
+                    applyVpnBlockedList(list)
+                    result.success(null)
+                }
+                "startVpn" -> {
+                    if (NetworkBlocker.resolveEffectiveBlockedPackages(this@MainActivity).isEmpty()) {
+                        Log.i("GenetVpn", "No blocked apps, skipping VPN")
+                        if (VpnState.isVpnRunning) {
+                            startService(Intent(this, GenetVpnService::class.java).setAction(GenetVpnService.ACTION_STOP))
+                        }
+                        result.success(mapOf("started" to false, "needsPermission" to false))
+                        return@setMethodCallHandler
+                    }
+                    if (VpnState.isVpnRunning) {
+                        result.success(mapOf("started" to false, "needsPermission" to false))
+                        return@setMethodCallHandler
+                    }
+                    val prepareIntent = VpnService.prepare(this@MainActivity)
+                    if (prepareIntent != null) {
+                        runOnUiThread {
+                            try {
+                                startActivityForResult(prepareIntent, REQUEST_VPN_PREPARE)
+                            } catch (e: Exception) {
+                                Log.e("GenetVpn", "VPN consent startActivityForResult failed", e)
+                            }
+                        }
+                        result.success(mapOf("started" to false, "needsPermission" to true))
+                    } else {
+                        val intent = Intent(this, GenetVpnService::class.java).setAction(GenetVpnService.ACTION_START)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            ContextCompat.startForegroundService(this, intent)
+                        } else {
+                            startService(intent)
+                        }
+                        result.success(mapOf("started" to true, "needsPermission" to false))
+                    }
+                }
+                "stopVpn" -> {
+                    startService(Intent(this, GenetVpnService::class.java).setAction(GenetVpnService.ACTION_STOP))
+                    result.success(null)
+                }
+                "refreshVpn" -> {
+                    @Suppress("UNCHECKED_CAST")
+                    val list = call.argument<List<String>>("packages")
+                    if (list != null) {
+                        applyVpnBlockedList(list)
+                    }
+                    if (VpnState.isVpnRunning) {
+                        val intent = Intent(this, GenetVpnService::class.java).setAction(GenetVpnService.ACTION_RESTART)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            ContextCompat.startForegroundService(this, intent)
+                        } else {
+                            startService(intent)
+                        }
+                    }
+                    result.success(null)
+                }
+                "isVpnRunning" -> result.success(VpnState.isVpnRunning)
+                "isVpnPermissionGranted" -> result.success(VpnService.prepare(this@MainActivity) == null)
+                else -> result.notImplemented()
+            }
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "setPin" -> {
@@ -54,8 +125,7 @@ class MainActivity : FlutterActivity() {
                 "setBlockedApps", "setBlockedPackages" -> {
                     val list = call.argument<List<String>>("packages") ?: emptyList()
                     val filtered = list.filter { it != packageName }
-                    val first3 = filtered.take(3).joinToString(",")
-                    android.util.Log.d("GENET", "setBlockedPackages received size=${filtered.size} packages=$first3")
+                    android.util.Log.d("GENET", "setBlockedPackages received size=${filtered.size}")
                     getGenetPrefs().edit().putString(GenetAccessibilityService.KEY_BLOCKED_APPS, JSONArray(filtered).toString()).apply()
                     GenetAccessibilityService.updateBlockedPackages(filtered)
                     sendBroadcast(android.content.Intent(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
@@ -144,6 +214,7 @@ class MainActivity : FlutterActivity() {
                 "setChildMode" -> {
                     val isChildMode = call.argument<Boolean>("isChildMode") ?: false
                     getGenetPrefs().edit().putBoolean(GenetAccessibilityService.KEY_IS_CHILD_MODE, isChildMode).apply()
+                    if (isChildMode) AppMonitorService.start(this) else AppMonitorService.stop(this)
                     result.success(null)
                 }
                 "getIsDeviceAdminEnabled" -> result.success(isDeviceAdminEnabled())
@@ -162,11 +233,31 @@ class MainActivity : FlutterActivity() {
         if (intent?.getBooleanExtra(EXTRA_SHOW_PERMISSION_RECOVERY, false) == true) pendingPermissionRecovery = true
     }
 
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_VPN_PREPARE && resultCode == Activity.RESULT_OK) {
+            startGenetVpnServiceIfReady()
+        }
+    }
+
+    private fun startGenetVpnServiceIfReady() {
+        if (VpnState.isVpnRunning) return
+        if (NetworkBlocker.resolveEffectiveBlockedPackages(this).isEmpty()) return
+        val i = Intent(this, GenetVpnService::class.java).setAction(GenetVpnService.ACTION_START)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            ContextCompat.startForegroundService(this, i)
+        } else {
+            startService(i)
+        }
+    }
+
     override fun onResume() {
         super.onResume()
-        // Post-reboot protection: if boot receiver set flag (child mode + incomplete protection), show parent lock until PIN
         if (getGenetPrefs().getBoolean(GenetAccessibilityService.KEY_REQUIRE_PARENT_UNLOCK_AFTER_REBOOT, false)) {
             startActivity(Intent(this, RebootLockActivity::class.java))
+        }
+        if (getGenetPrefs().getBoolean(GenetAccessibilityService.KEY_IS_CHILD_MODE, false)) {
+            AppMonitorService.start(this)
         }
     }
 
@@ -188,7 +279,15 @@ class MainActivity : FlutterActivity() {
 
     private fun getGenetPrefs() = getSharedPreferences(GenetAccessibilityService.PREFS_NAME, MODE_PRIVATE)
 
-    /** Opens the system screen to enable Genet as Device Admin. */
+    /** Updates VPN block list; empty list stops the VPN service if it is running. */
+    private fun applyVpnBlockedList(list: List<String>) {
+        NetworkBlocker.setBlockedApps(list)
+        if (list.isEmpty() && VpnState.isVpnRunning) {
+            Log.i("GenetVpn", "No blocked apps, skipping VPN")
+            startService(Intent(this, GenetVpnService::class.java).setAction(GenetVpnService.ACTION_STOP))
+        }
+    }
+
     private fun enableDeviceAdmin() {
         val componentName = ComponentName(this, GenetDeviceAdminReceiver::class.java)
         val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
@@ -220,7 +319,6 @@ class MainActivity : FlutterActivity() {
         return true
     }
 
-    /** אפליקציות עם Launcher (ניתנות לפתיחה מה-home). מחזיר name, package, icon (Base64). */
     private fun getInstalledApps(): List<Map<String, Any>> {
         val pm = packageManager
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)

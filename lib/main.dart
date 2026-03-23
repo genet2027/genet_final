@@ -1,8 +1,13 @@
+import 'dart:async';
+
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'core/config/genet_config.dart';
+import 'core/user_role.dart';
 import 'firebase_options.dart';
 import 'l10n/app_localizations.dart';
 import 'repositories/children_repository.dart';
@@ -39,15 +44,32 @@ class GenetApp extends StatefulWidget {
 class _GenetAppState extends State<GenetApp> with WidgetsBindingObserver {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
+  static const EventChannel _kEnforcementChannel = EventChannel('genet/enforcement');
+  StreamSubscription<dynamic>? _enforcementSub;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkPermissionRecovery());
+    _enforcementSub = _kEnforcementChannel.receiveBroadcastStream().listen(
+      (event) {
+        if (kDebugMode) {
+          debugPrint('genet/enforcement: $event');
+        }
+        // Phase 2: push a full-screen block UI using event['packageName'] when role is child.
+      },
+      onError: (Object e) {
+        if (kDebugMode) {
+          debugPrint('genet/enforcement error: $e');
+        }
+      },
+    );
   }
 
   @override
   void dispose() {
+    _enforcementSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -55,15 +77,23 @@ class _GenetAppState extends State<GenetApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
+    GenetConfig.applyNativeChildModeFromSavedRole();
+    // Child device: re-push Firestore-backed prefs to native after backgrounding.
+    GenetConfig.syncToNativeAfterRemoteChildDoc();
     _checkPermissionRecovery();
   }
 
   Future<void> _checkPermissionRecovery() async {
+    final role = await getUserRole();
+    if (role != kUserRoleChild) return;
     final show = await GenetConfig.shouldShowPermissionRecovery();
     if (!show || !mounted) return;
-    _navigatorKey.currentState?.push<void>(
-      MaterialPageRoute(builder: (_) => const PermissionRecoveryScreen()),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _navigatorKey.currentState?.push<void>(
+        MaterialPageRoute(builder: (_) => const PermissionRecoveryScreen()),
+      );
+    });
   }
 
   @override

@@ -5,15 +5,44 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../repositories/children_repository.dart';
+import '../user_role.dart';
+import '../vpn_remote_child.dart';
 
 /// Syncs parent config (PIN, Sleep Lock, blocked apps) to native Android storage
 /// so the Accessibility Service can enforce locks.
 class GenetConfig {
+  /// Persists [kUserRoleParent] / [kUserRoleChild] and sets native child mode in one step.
+  static Future<void> commitUserRole(String role) async {
+    await setUserRole(role);
+    await setChildMode(role == kUserRoleChild);
+  }
+
+  /// Applies native [setChildMode] from saved role. Unknown / missing role → parent (no enforcement).
+  static Future<void> applyNativeChildModeFromSavedRole() async {
+    if (!Platform.isAndroid) return;
+    final role = await getUserRole();
+    final isChild = role == kUserRoleChild;
+    await setChildMode(isChild);
+  }
+
+  /// Call after a Firestore snapshot for the linked child is merged into local prefs
+  /// ([watchChildDocStream] on the child device only — not on parent UI streams).
+  /// Pushes blocked apps / extension approvals / sleep lock to Android so remote parent changes enforce on this device.
+  /// No-op when [getUserRole] is not [kUserRoleChild] (parent emulator never applies child policy natively).
+  static Future<void> syncToNativeAfterRemoteChildDoc() async {
+    if (!Platform.isAndroid) return;
+    final role = await getUserRole();
+    if (role != kUserRoleChild) return;
+    await syncToNative();
+  }
+
   /// Sync all config from Flutter prefs to native. Call on app startup.
   /// When this device is linked to a child, blocked apps and extension approved
   /// are taken from that child's data.
+  /// Native enforcement only when saved role is child.
   static Future<void> syncToNative() async {
     if (!Platform.isAndroid) return;
+    await applyNativeChildModeFromSavedRole();
     try {
       final prefs = await SharedPreferences.getInstance();
 
@@ -35,7 +64,9 @@ class GenetConfig {
             ? _decodeExtensionApproved(raw) ?? {}
             : {};
       }
-      await setBlockedApps(blocked);
+      final effective =
+          VpnRemoteChildPolicy.effectiveBlockedFromLists(blocked, extensionApproved);
+      await setBlockedApps(effective);
       await setExtensionApproved(extensionApproved);
 
       final permissionLock = prefs.getBool('genet_permission_lock_enabled') ?? false;

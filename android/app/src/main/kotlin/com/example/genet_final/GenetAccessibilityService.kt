@@ -1,10 +1,12 @@
 package com.example.genet_final
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.content.pm.PackageManager
 import org.json.JSONArray
@@ -14,19 +16,23 @@ class GenetAccessibilityService : AccessibilityService() {
 
     private val overlayManager by lazy { BlockOverlayManager(applicationContext) }
     private val handler = Handler(Looper.getMainLooper())
-    private val debounceMs = 500L
+    private val debounceMs = 600L
 
-    private val homeIntent: Intent by lazy {
-        Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
     private var debounceRunnable: Runnable? = null
     @Volatile private var lastForegroundPkg: String? = null
     @Volatile private var lastShouldShowOverlay = false
     @Volatile private var lastBlockedApp = false
+    /** When true, block overlay session active (single overlay instance; no duplicate views). */
+    @Volatile private var overlayBlockSessionActive = false
 
-    /** חבילות שאסור לחסום (Genet, Launcher, SystemUI, Recents בלבד) */
+    /** Throttle HOME spam while foreground stays blocked (same pkg within [HOME_THROTTLE_MS]). */
+    private var lastHomeSentAt = 0L
+    private var lastHomeSentPkg: String? = null
+    private val homeThrottleMs = 450L
+
+    /** חבילות שאסור לחסום (Genet, Launcher, SystemUI, Recents בלבד) — Genet ע"י [Whitelist.isGenetApp]. */
     private fun isWhitelisted(pkg: String): Boolean {
-        if (pkg == packageName) return true
+        if (Whitelist.isGenetApp(this, pkg)) return true
         if (pkg in WHITELIST_PACKAGES) return true
         if (pkg == defaultLauncherPackage) return true
         return false
@@ -38,29 +44,42 @@ class GenetAccessibilityService : AccessibilityService() {
         resolveInfo?.activityInfo?.packageName
     }
 
+    /** Throttled eject via [EmergencyEjector] to avoid loops / vibration. */
+    private fun sendHomeThrottled(foregroundPkg: String?) {
+        val pkg = foregroundPkg ?: ""
+        val now = System.currentTimeMillis()
+        if (pkg == lastHomeSentPkg && now - lastHomeSentAt < homeThrottleMs) return
+        lastHomeSentAt = now
+        lastHomeSentPkg = pkg
+        EmergencyEjector.ejectToHome(this, TAG, pkg)
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val eventType = event?.eventType ?: return
-        if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
+        if (!ForegroundAppDetector.isWindowForegroundEvent(eventType)) return
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val isChildMode = prefs.getBoolean(KEY_IS_CHILD_MODE, false)
         if (!isChildMode) {
             Log.d("GENET", "Parent mode detected - skipping blocks")
+            overlayBlockSessionActive = false
             handler.post { overlayManager.hide() }
             return
         }
         Log.d("GENET", "Child mode active - applying restrictions")
-        val foregroundPackage = event.packageName?.toString()
+        val foregroundPackage = ForegroundAppDetector.foregroundPackageFromEvent(event)
         if (foregroundPackage == null || foregroundPackage.isBlank()) {
             Log.d("GENET", "Skipping block because package is null/blank")
             return
         }
         Log.d("GENET", "Foreground package: $foregroundPackage")
         val genetPackage = applicationContext.packageName
-        if (foregroundPackage == genetPackage || foregroundPackage.startsWith("io.flutter")) {
-            Log.d("GENET", "Skipping block for Genet")
+        val isGenet = Whitelist.isGenetApp(this, foregroundPackage)
+        if (isGenet) {
+            Log.d(TAG, "overlay blocked: foreground=$foregroundPackage isGenetPackage=true (no overlay in Genet)")
             lastForegroundPkg = foregroundPackage
             lastShouldShowOverlay = false
             lastBlockedApp = false
+            overlayBlockSessionActive = false
             debounceRunnable?.let { handler.removeCallbacks(it) }
             handler.post { overlayManager.hide() }
             return
@@ -70,6 +89,7 @@ class GenetAccessibilityService : AccessibilityService() {
             lastForegroundPkg = foregroundPackage
             lastShouldShowOverlay = false
             lastBlockedApp = false
+            overlayBlockSessionActive = false
             debounceRunnable?.let { handler.removeCallbacks(it) }
             handler.post { overlayManager.hide() }
             return
@@ -88,6 +108,7 @@ class GenetAccessibilityService : AccessibilityService() {
             lastForegroundPkg = foregroundPackage
             lastShouldShowOverlay = false
             lastBlockedApp = false
+            overlayBlockSessionActive = false
             debounceRunnable?.let { handler.removeCallbacks(it) }
             handler.post { overlayManager.hide() }
             return
@@ -96,6 +117,7 @@ class GenetAccessibilityService : AccessibilityService() {
             lastForegroundPkg = foregroundPackage
             lastShouldShowOverlay = false
             lastBlockedApp = false
+            overlayBlockSessionActive = false
             debounceRunnable?.let { handler.removeCallbacks(it) }
             handler.post { overlayManager.hide() }
             return
@@ -111,6 +133,7 @@ class GenetAccessibilityService : AccessibilityService() {
             lastForegroundPkg = foregroundPackage
             lastShouldShowOverlay = false
             lastBlockedApp = false
+            overlayBlockSessionActive = false
             debounceRunnable?.let { handler.removeCallbacks(it) }
             handler.post { overlayManager.hide() }
             return
@@ -118,7 +141,10 @@ class GenetAccessibilityService : AccessibilityService() {
         val whitelisted = isWhitelisted(foregroundPackage)
         val blockedSet = getBlockedPackagesSet(prefs)
         val blockedApp = !whitelisted && blockedSet.contains(foregroundPackage)
-        Log.d(TAG, "foreground app: $foregroundPackage | is blocked: $blockedApp | is temporarily approved: $temporarilyApproved")
+        Log.d(
+            TAG,
+            "foreground=$foregroundPackage blocked=$blockedApp isGenetPackage=${Whitelist.isGenetApp(this, foregroundPackage)} tempApproved=$temporarilyApproved",
+        )
 
         lastForegroundPkg = foregroundPackage
         lastBlockedApp = blockedApp
@@ -131,33 +157,56 @@ class GenetAccessibilityService : AccessibilityService() {
             val isChildModeNow = runnablePrefs.getBoolean(KEY_IS_CHILD_MODE, false)
             if (!isChildModeNow) {
                 Log.d("GENET", "Parent mode detected in runnable - skipping all blocks")
+                overlayBlockSessionActive = false
                 overlayManager.hide()
                 debounceRunnable = null
                 return@Runnable
             }
-            if (lastForegroundPkg == applicationContext.packageName) {
+            if (Whitelist.isGenetApp(this, lastForegroundPkg)) {
+                Log.d(TAG, "overlay hide: returned to Genet pkg=$lastForegroundPkg isGenetPackage=true")
+                overlayBlockSessionActive = false
                 overlayManager.hide()
                 debounceRunnable = null
                 return@Runnable
             }
             if (lastForegroundPkg != null && (lastForegroundPkg in SETTINGS_PACKAGES || lastForegroundPkg in PERMISSION_CONTROLLER_PACKAGES)) {
+                overlayBlockSessionActive = false
                 overlayManager.hide()
                 debounceRunnable = null
                 return@Runnable
             }
             if (lastShouldShowOverlay) {
+                if (Whitelist.isGenetApp(this, lastForegroundPkg)) {
+                    Log.d(TAG, "overlay skip: genet foreground pkg=$lastForegroundPkg isGenetPackage=true")
+                    overlayBlockSessionActive = false
+                    overlayManager.hide()
+                    debounceRunnable = null
+                    return@Runnable
+                }
+                Log.d(TAG, "overlay allowed: external pkg=$lastForegroundPkg isGenetPackage=false")
                 val showRecovery = lastBlockedApp && PermissionChecker.getMissingPermissions(applicationContext).isNotEmpty()
                 if (showRecovery) {
                     val intent = Intent(applicationContext, MainActivity::class.java)
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     intent.putExtra(MainActivity.EXTRA_SHOW_PERMISSION_RECOVERY, true)
                     try { startActivity(intent) } catch (_: Exception) {}
+                    overlayBlockSessionActive = false
                     overlayManager.hide()
                 } else {
-                    try { startActivity(homeIntent) } catch (_: Exception) {}
-                    if (!overlayManager.isVisible()) overlayManager.show()
+                    sendHomeThrottled(lastForegroundPkg)
+                    lastForegroundPkg?.let { pkg ->
+                        EnforcementBridge.emitAppBlocked(pkg)
+                    }
+                    if (!overlayManager.isVisible()) {
+                        overlayManager.show()
+                        Log.d(TAG, "overlay shown fg=$lastForegroundPkg blocked=true")
+                    } else {
+                        Log.d(TAG, "overlay already active fg=$lastForegroundPkg")
+                    }
+                    overlayBlockSessionActive = true
                 }
             } else {
+                overlayBlockSessionActive = false
                 overlayManager.hide()
             }
             debounceRunnable = null
@@ -172,33 +221,7 @@ class GenetAccessibilityService : AccessibilityService() {
     }
 
     private fun getBlockedPackagesSet(prefs: android.content.SharedPreferences): Set<String> {
-        val base = cachedBlockedPackages?.toMutableSet() ?: run {
-            val set = mutableSetOf<String>()
-            val blockedJson = prefs.getString(KEY_BLOCKED_APPS, "[]") ?: "[]"
-            try {
-                val arr = JSONArray(blockedJson)
-                for (i in 0 until arr.length()) {
-                    arr.optString(i)?.takeIf { it.isNotEmpty() }?.let { set.add(it) }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Parse blocked apps", e)
-            }
-            set
-        }
-        if (prefs.getBoolean(KEY_BLOCK_WEB_SEARCH, true)) base.addAll(WEB_SEARCH_PACKAGES)
-        val now = System.currentTimeMillis()
-        val approvedJson = prefs.getString(KEY_EXTENSION_APPROVED_UNTIL, "{}") ?: "{}"
-        try {
-            val approved = JSONObject(approvedJson)
-            val iter = approved.keys()
-            while (iter.hasNext()) {
-                val pkg = iter.next()
-                val until = approved.optLong(pkg, 0L)
-                if (until > now) base.remove(pkg)
-            }
-        } catch (_: Exception) {}
-        base.remove(applicationContext.packageName)
-        return base
+        return buildBlockedPackagesSet(applicationContext, prefs)
     }
 
     private fun appendBlockedEvent(packageName: String, timestamp: Long, type: String) {
@@ -237,6 +260,19 @@ class GenetAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() {}
+
+    override fun onKeyEvent(event: KeyEvent): Boolean {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        if (!prefs.getBoolean(KEY_IS_CHILD_MODE, false)) return super.onKeyEvent(event)
+        if (event.keyCode != KeyEvent.KEYCODE_BACK) return super.onKeyEvent(event)
+        if (event.action != KeyEvent.ACTION_DOWN) return super.onKeyEvent(event)
+        if (overlayManager.isVisible() && lastShouldShowOverlay) {
+            Log.d(TAG, "back blocked: service key event fg=$lastForegroundPkg")
+            sendHomeThrottled(lastForegroundPkg)
+            return true
+        }
+        return super.onKeyEvent(event)
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -309,6 +345,41 @@ class GenetAccessibilityService : AccessibilityService() {
             return set.contains(blockedPackage)
         }
 
+        /**
+         * Same blocked set as [GenetAccessibilityService.getBlockedPackagesSet] — shared with [BlockedAppsRepository].
+         */
+        @JvmStatic
+        fun buildBlockedPackagesSet(context: Context, prefs: android.content.SharedPreferences): Set<String> {
+            val base = cachedBlockedPackages?.toMutableSet() ?: run {
+                val set = mutableSetOf<String>()
+                val blockedJson = prefs.getString(KEY_BLOCKED_APPS, "[]") ?: "[]"
+                try {
+                    val arr = JSONArray(blockedJson)
+                    for (i in 0 until arr.length()) {
+                        arr.optString(i)?.takeIf { it.isNotEmpty() }?.let { set.add(it) }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Parse blocked apps", e)
+                }
+                set
+            }
+            if (prefs.getBoolean(KEY_BLOCK_WEB_SEARCH, true)) base.addAll(WEB_SEARCH_PACKAGES)
+            val now = System.currentTimeMillis()
+            val approvedJson = prefs.getString(KEY_EXTENSION_APPROVED_UNTIL, "{}") ?: "{}"
+            try {
+                val approved = JSONObject(approvedJson)
+                val iter = approved.keys()
+                while (iter.hasNext()) {
+                    val pkg = iter.next()
+                    val until = approved.optLong(pkg, 0L)
+                    if (until > now) base.remove(pkg)
+                }
+            } catch (_: Exception) {}
+            base.remove(context.packageName)
+            base.removeAll(Whitelist.KNOWN_GENET_APP_IDS)
+            return base
+        }
+
         private fun isInTimeRangeStatic(startStr: String, endStr: String): Boolean {
             val (sh, sm) = startStr.split(":").let { Pair(it.getOrElse(0) { "0" }.toIntOrNull() ?: 0, it.getOrElse(1) { "0" }.toIntOrNull() ?: 0) }
             val (eh, em) = endStr.split(":").let { Pair(it.getOrElse(0) { "0" }.toIntOrNull() ?: 0, it.getOrElse(1) { "0" }.toIntOrNull() ?: 0) }
@@ -322,9 +393,6 @@ class GenetAccessibilityService : AccessibilityService() {
                 currentMinutes >= startMinutes || currentMinutes < endMinutes
             }
         }
-
-        /** Genet must never be blocked (debug + release package names). */
-        private val GENET_PACKAGES = setOf("com.example.genet_final")
 
         private fun getBlockedPackagesSetStatic(prefs: android.content.SharedPreferences): Set<String> {
             val base = cachedBlockedPackages?.toMutableSet() ?: run {
@@ -350,7 +418,7 @@ class GenetAccessibilityService : AccessibilityService() {
                     if (until > now) base.remove(pkg)
                 }
             } catch (_: Exception) {}
-            base.removeAll(GENET_PACKAGES)
+            base.removeAll(Whitelist.KNOWN_GENET_APP_IDS)
             return base
         }
     }

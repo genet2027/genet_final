@@ -3,11 +3,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../core/config/genet_config.dart';
-import '../core/user_role.dart';
-import '../core/pin_storage.dart';
-import '../theme/app_theme.dart';
-import 'parent_shell.dart';
+import '../../core/config/genet_config.dart';
+import '../../core/user_role.dart';
+import '../../core/pin_storage.dart';
+import '../../theme/app_theme.dart';
+import '../parent/parent_shell.dart';
 
 /// מסך הזנת PIN לאימות הורה
 class PinLoginScreen extends StatefulWidget {
