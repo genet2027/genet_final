@@ -8,10 +8,9 @@ import '../../repositories/parent_child_sync_repository.dart';
 import '../../theme/app_theme.dart';
 import '../common/settings_screen.dart';
 import 'parent_dashboard_tab.dart';
-import 'reports_tab.dart';
 import '../required_permissions_screen.dart';
 
-/// Parent-only shell with BottomNavigationBar: Dashboard | Reports | Settings.
+/// Parent-only shell with BottomNavigationBar: Dashboard | Settings.
 class ParentShell extends StatefulWidget {
   const ParentShell({super.key});
 
@@ -66,7 +65,6 @@ class _ParentShellState extends State<ParentShell> with WidgetsBindingObserver {
 
   static const List<_TabInfo> _tabs = [
     _TabInfo(icon: Icons.dashboard_rounded, label: 'הורה'),
-    _TabInfo(icon: Icons.chat_rounded, label: 'דיווחים'),
     _TabInfo(icon: Icons.settings_rounded, label: 'הגדרות'),
   ];
 
@@ -80,7 +78,6 @@ class _ParentShellState extends State<ParentShell> with WidgetsBindingObserver {
           index: _selectedIndex,
           children: const [
             ParentDashboardTab(),
-            ReportsTab(),
             SettingsScreen(),
           ],
         ),

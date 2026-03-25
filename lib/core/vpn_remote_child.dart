@@ -53,7 +53,10 @@ class VpnRemoteChildPolicy {
   }
 
   /// Returns UI/Firebase status: on | off | error
-  static Future<String> apply(SyncedChildData data) async {
+  static Future<String> apply(
+    SyncedChildData data, {
+    bool? overrideVpnEnabled,
+  }) async {
     if (!Platform.isAndroid) return 'off';
     final role = await getUserRole();
     if (role != kUserRoleChild) return 'off';
@@ -65,7 +68,7 @@ class VpnRemoteChildPolicy {
       return 'error';
     }
 
-    final vpnEnabled = data.vpnEnabled;
+    final vpnEnabled = overrideVpnEnabled ?? data.vpnEnabled;
     final rawBlocked = data.blockedPackages;
     final effective = effectiveBlockedPackages(data);
     final effSorted = List<String>.from(effective)..sort();

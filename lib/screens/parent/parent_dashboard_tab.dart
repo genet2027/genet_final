@@ -4,7 +4,6 @@ import '../../theme/app_theme.dart';
 import '../sleep_lock_screen.dart';
 import '../content_library_screen.dart';
 import 'blocked_apps_screen.dart';
-import '../child/child_settings_screen.dart';
 import 'children_management_screen.dart';
 
 /// Parent Dashboard: Stack + gradient, GENET (English), יומי card, GridView of 3 cards, green banner.
@@ -66,8 +65,6 @@ class ParentDashboardTab extends StatelessWidget {
                 _YomiCard(),
                 const SizedBox(height: 16),
                 _ManagementButton(),
-                const SizedBox(height: 12),
-                _ChildSettingsButton(),
                 const SizedBox(height: 20),
                 SizedBox(
                   height: 120,
@@ -221,47 +218,6 @@ class _ManagementButton extends StatelessWidget {
               const SizedBox(width: 10),
               const Text(
                 'ניהול ילדים',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-                textDirection: TextDirection.rtl,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ChildSettingsButton extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white.withValues(alpha: 0.25),
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => const ChildSettingsScreen(),
-            ),
-          );
-        },
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.child_care_rounded, color: AppTheme.primaryBlue, size: 24),
-              const SizedBox(width: 10),
-              const Text(
-                'הגדרת ילד',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,

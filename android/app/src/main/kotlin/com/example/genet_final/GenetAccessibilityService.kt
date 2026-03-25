@@ -139,11 +139,13 @@ class GenetAccessibilityService : AccessibilityService() {
             return
         }
         val whitelisted = isWhitelisted(foregroundPackage)
+        val sleepLockRestrictionActive = isSleepLockRestrictionActive(prefs)
         val blockedSet = getBlockedPackagesSet(prefs)
-        val blockedApp = !whitelisted && blockedSet.contains(foregroundPackage)
+        val blockedApp = !whitelisted &&
+            (sleepLockRestrictionActive || blockedSet.contains(foregroundPackage))
         Log.d(
             TAG,
-            "foreground=$foregroundPackage blocked=$blockedApp isGenetPackage=${Whitelist.isGenetApp(this, foregroundPackage)} tempApproved=$temporarilyApproved",
+            "foreground=$foregroundPackage blocked=$blockedApp isGenetPackage=${Whitelist.isGenetApp(this, foregroundPackage)} tempApproved=$temporarilyApproved sleepLockRestrictionActive=$sleepLockRestrictionActive",
         )
 
         lastForegroundPkg = foregroundPackage
@@ -303,6 +305,7 @@ class GenetAccessibilityService : AccessibilityService() {
         const val KEY_MAINTENANCE_WINDOW_END = "maintenance_window_end"
         const val KEY_EXTENSION_APPROVED_UNTIL = "extension_approved_until"
         const val KEY_IS_CHILD_MODE = "genet_is_child_mode"
+        const val KEY_VPN_PROTECTION_LOST = "genet_vpn_protection_lost"
         /** Set by boot receiver when in child mode and protection incomplete; cleared only after parent PIN in RebootLockActivity. */
         const val KEY_REQUIRE_PARENT_UNLOCK_AFTER_REBOOT = "genet_require_parent_unlock_after_reboot"
         val SETTINGS_PACKAGES = setOf("com.android.settings", "com.google.android.settings")
@@ -330,19 +333,31 @@ class GenetAccessibilityService : AccessibilityService() {
         val WEB_SEARCH_PACKAGES: Set<String> = setOf(
             "com.google.android.googlequicksearchbox",  // Google App / Search
             "com.android.chrome",                         // Chrome
+            "com.chrome.beta",                            // Chrome Beta
+            "com.chrome.dev",                             // Chrome Dev
             "com.android.browser",                        // Android Browser
             "com.sec.android.app.sbrowser",               // Samsung Internet
             "com.mi.globalbrowser",                       // Xiaomi/Mi Browser
             "org.mozilla.firefox",                       // Firefox
-            "com.microsoft.emmx"                          // Microsoft Edge
+            "org.mozilla.firefox_beta",                  // Firefox Beta
+            "com.microsoft.emmx",                        // Microsoft Edge
+            "com.opera.browser",                         // Opera
+            "com.opera.mini.native",                     // Opera Mini
+            "com.brave.browser"                          // Brave
         )
 
         /** לבדיקה ב-LockActivity: האם עדיין צריך להציג overlay (האפליקציה עדיין ברשימת החסימה). */
         @JvmStatic
         fun shouldStillShowLock(prefs: android.content.SharedPreferences, blockedPackage: String): Boolean {
             if (blockedPackage.isEmpty()) return false
+            if (isSleepLockRestrictionActive(prefs)) return true
             val set = getBlockedPackagesSetStatic(prefs)
             return set.contains(blockedPackage)
+        }
+
+        @JvmStatic
+        fun isSleepLockRestrictionActive(prefs: android.content.SharedPreferences): Boolean {
+            return prefs.getBoolean(KEY_NIGHT_MODE_ACTIVE, false)
         }
 
         /**

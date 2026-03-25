@@ -78,6 +78,63 @@ const String _kLastName = 'lastName';
 const String _kName = 'name';
 const String _kAge = 'age';
 const String _kSchoolCode = 'schoolCode';
+const String _kInstalledApps = 'apps';
+const String _kInstalledAppsFingerprintPrefix = 'genet_installed_apps_fp_';
+
+DocumentReference<Map<String, dynamic>> _childInstalledAppsDocRef(String childId) {
+  return FirebaseFirestore.instance.doc('child_apps/$childId');
+}
+
+Future<void> syncInstalledUserAppsOnce(String childId) async {
+  if (childId.isEmpty) return;
+  final rawApps = await GenetConfig.getInstalledApps();
+  final byPackage = <String, Map<String, String>>{};
+  for (final app in rawApps) {
+    final packageName = (app['package'] as String? ?? '').trim();
+    final appName = (app['name'] as String? ?? '').trim();
+    if (packageName.isEmpty || appName.isEmpty) continue;
+    byPackage[packageName] = {
+      'packageName': packageName,
+      'appName': appName,
+    };
+  }
+  final cleanApps = byPackage.values.toList()
+    ..sort((a, b) {
+      final byName = (a['appName'] ?? '').toLowerCase().compareTo((b['appName'] ?? '').toLowerCase());
+      if (byName != 0) return byName;
+      return (a['packageName'] ?? '').compareTo(b['packageName'] ?? '');
+    });
+  final fingerprint = cleanApps
+      .map((e) => '${e['packageName']}|${e['appName']}')
+      .join(',');
+  final prefs = await SharedPreferences.getInstance();
+  final fingerprintKey = '$_kInstalledAppsFingerprintPrefix$childId';
+  final lastFingerprint = prefs.getString(fingerprintKey) ?? '';
+  if (fingerprint == lastFingerprint) {
+    debugPrint('[GenetApps] duplicate firebase write prevented');
+    return;
+  }
+  debugPrint('[GenetApps] number of apps found: ${cleanApps.length}');
+  debugPrint('[GenetApps] app names: ${cleanApps.map((e) => e['appName']).join(', ')}');
+  await _childInstalledAppsDocRef(childId).set({
+    _kInstalledApps: cleanApps,
+    _kUpdatedAt: FieldValue.serverTimestamp(),
+  });
+  await prefs.setString(fingerprintKey, fingerprint);
+  debugPrint('[GenetApps] upload success');
+}
+
+Future<List<Map<String, dynamic>>> getChildInstalledAppsFromFirebase(String childId) async {
+  if (childId.isEmpty) return [];
+  final snap = await _childInstalledAppsDocRef(childId).get();
+  final data = snap.data();
+  final raw = data?[_kInstalledApps];
+  if (raw is! List) return [];
+  return raw
+      .whereType<Map>()
+      .map((e) => Map<String, dynamic>.from(e).cast<String, dynamic>())
+      .toList();
+}
 
 /// Parent: create/update child doc in Firebase when child connects. Also write to local and child_link_status.
 Future<void> upsertParentChildDoc({
@@ -537,6 +594,13 @@ Future<void> cancelExtensionInFirebase(String parentId, String childId, String p
 const String _kChildSettingsCollection = 'child_settings';
 const String _kSleepLockSubcollection = 'sleep_lock';
 const String _kSleepLockSettingsDoc = 'settings';
+const String _kRequireVpn = 'requireVpn';
+
+DocumentReference<Map<String, dynamic>> _childSettingsDocRef(String childId) {
+  return FirebaseFirestore.instance
+      .collection(_kChildSettingsCollection)
+      .doc(childId);
+}
 
 DocumentReference<Map<String, dynamic>> _sleepLockDocRef(String childId) {
   return FirebaseFirestore.instance
@@ -565,6 +629,17 @@ Future<void> writeSleepLockToFirebase(
     },
     SetOptions(merge: true),
   );
+  await _childSettingsDocRef(childId).set(
+    {
+      'sleepLock': {
+        'isActive': isActive,
+        'startTime': startTime,
+        'endTime': endTime,
+      },
+      'updatedAt': FieldValue.serverTimestamp(),
+    },
+    SetOptions(merge: true),
+  );
 }
 
 /// One-shot read (e.g. parent Sleep Lock screen open).
@@ -588,6 +663,42 @@ Stream<Map<String, dynamic>?> watchChildSleepLockStream(String childId) {
     final d = snap.data();
     developer.log(
       'SLEEP_LOCK child snapshot received isActive=${d?['isActive']} start=${d?['startTime']} end=${d?['endTime']}',
+      name: 'Sync',
+    );
+    return d;
+  });
+}
+
+Future<void> writeRequireVpnToFirebase(String childId, {required bool requireVpn}) async {
+  if (childId.isEmpty) return;
+  final path = '${_kChildSettingsCollection}/$childId';
+  developer.log(
+    'REQUIRE_VPN parent write childId=$childId path=$path requireVpn=$requireVpn',
+    name: 'Sync',
+  );
+  await _childSettingsDocRef(childId).set(
+    {
+      _kRequireVpn: requireVpn,
+      'updatedAt': FieldValue.serverTimestamp(),
+    },
+    SetOptions(merge: true),
+  );
+}
+
+Future<bool> getRequireVpnFromFirebase(String childId) async {
+  if (childId.isEmpty) return false;
+  final snap = await _childSettingsDocRef(childId).get();
+  return snap.data()?[_kRequireVpn] == true;
+}
+
+Stream<Map<String, dynamic>?> watchChildSettingsStream(String childId) {
+  if (childId.isEmpty) return Stream.value(null);
+  final path = '${_kChildSettingsCollection}/$childId';
+  developer.log('CHILD_SETTINGS child listen childId=$childId path=$path', name: 'Sync');
+  return _childSettingsDocRef(childId).snapshots().map((snap) {
+    final d = snap.data();
+    developer.log(
+      'CHILD_SETTINGS source=Firebase childId=$childId requireVpn=${d?[_kRequireVpn] == true} sleepLockActive=${(d?['sleepLock'] as Map?)?['isActive']}',
       name: 'Sync',
     );
     return d;

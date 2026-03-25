@@ -30,6 +30,7 @@ class AppMonitorService : Service() {
     private var lastHomeAt = 0L
     private var lastHomePkg: String? = null
     private val homeThrottleMs = 450L
+    private var lastLockPkg: String? = null
 
     private val tickRunnable = object : Runnable {
         override fun run() {
@@ -91,7 +92,36 @@ class AppMonitorService : Service() {
         val pkg = UsageStatsHelper.getForegroundPackage(this)
         Log.d(TAG, "current package: ${pkg ?: "null"}")
         if (pkg.isNullOrBlank()) return
-        if (Whitelist.isGenetApp(this, pkg)) return
+        val protectionLost = prefs.getBoolean(GenetAccessibilityService.KEY_VPN_PROTECTION_LOST, false)
+        val sleepLockRestrictionActive =
+            GenetAccessibilityService.isSleepLockRestrictionActive(prefs)
+        if (Whitelist.isGenetApp(this, pkg)) {
+            if (protectionLost) {
+                Log.d("GENET_VPN", "ALLOWING GENET")
+            }
+            dismissVpnLockIfShowing()
+            return
+        }
+        if (sleepLockRestrictionActive) {
+            val restricted = !Whitelist.isWhitelisted(this, pkg)
+            Log.d("GENET_SLEEP", "sleepLockActive=true package=$pkg restricted=$restricted")
+            if (restricted) {
+                sendHomeThrottled(pkg)
+            }
+            dismissVpnLockIfShowing()
+            return
+        }
+        if (protectionLost) {
+            if (shouldShowBlockScreen(pkg, prefs)) {
+                Log.d("GENET_VPN", "BLOCKED APP DETECTED $pkg")
+                showVpnLockFor(pkg)
+            } else {
+                Log.d("GENET_VPN", "APP NOT BLOCKED $pkg")
+                dismissVpnLockIfShowing()
+            }
+            return
+        }
+        dismissVpnLockIfShowing()
         if (pkg in GenetAccessibilityService.SETTINGS_PACKAGES ||
             pkg in GenetAccessibilityService.PERMISSION_CONTROLLER_PACKAGES
         ) {
@@ -101,9 +131,53 @@ class AppMonitorService : Service() {
         sendHomeThrottled(pkg)
     }
 
+    private fun shouldShowBlockScreen(foregroundPkg: String, prefs: SharedPreferences): Boolean {
+        val rawBlocked = loadRawBlockedPackagesSet(prefs)
+        val effectiveBlocked = loadBlockedPackagesSet(prefs)
+        val excluded = isExcludedFromVpnLock(foregroundPkg)
+        val packageBlocked = rawBlocked.contains(foregroundPkg)
+        val inBlockedTime = effectiveBlocked.contains(foregroundPkg)
+        val shouldShow = foregroundPkg.isNotBlank() &&
+            packageBlocked &&
+            inBlockedTime &&
+            !excluded
+        Log.d("GENET_VPN", "current foreground package: $foregroundPkg")
+        Log.d("GENET_VPN", "whether package is blocked: $packageBlocked")
+        Log.d("GENET_VPN", "whether package is in blocked time: $inBlockedTime")
+        Log.d("GENET_VPN", "whether package is excluded: $excluded")
+        Log.d("GENET_VPN", "final shouldShowBlockScreen result: $shouldShow")
+        return shouldShow
+    }
+
+    private fun isExcludedFromVpnLock(pkg: String): Boolean {
+        if (Whitelist.isWhitelisted(this, pkg)) return true
+        if (pkg in GenetAccessibilityService.SETTINGS_PACKAGES) return true
+        if (pkg in GenetAccessibilityService.PERMISSION_CONTROLLER_PACKAGES) return true
+        return false
+    }
+
     private fun isBlockedForeground(pkg: String, prefs: SharedPreferences): Boolean {
         val blocked = loadBlockedPackagesSet(prefs)
         return blocked.contains(pkg)
+    }
+
+    private fun loadRawBlockedPackagesSet(prefs: SharedPreferences): Set<String> {
+        val base = mutableSetOf<String>()
+        val blockedJson = prefs.getString(GenetAccessibilityService.KEY_BLOCKED_APPS, "[]") ?: "[]"
+        try {
+            val arr = JSONArray(blockedJson)
+            for (i in 0 until arr.length()) {
+                arr.optString(i)?.takeIf { it.isNotEmpty() }?.let { base.add(it) }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Parse blocked apps", e)
+        }
+        if (prefs.getBoolean(GenetAccessibilityService.KEY_BLOCK_WEB_SEARCH, true)) {
+            base.addAll(GenetAccessibilityService.WEB_SEARCH_PACKAGES)
+        }
+        base.remove(packageName)
+        base.removeAll(Whitelist.KNOWN_GENET_APP_IDS)
+        return base
     }
 
     /** Mirrors [GenetAccessibilityService.getBlockedPackagesSet] logic (prefs JSON, not cache). */
@@ -144,11 +218,34 @@ class AppMonitorService : Service() {
         lastHomePkg = foregroundPkg
         val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
+            Log.d("GENET_VPN", "FORCING RETURN TO HOME")
             startActivity(home)
             Log.d(TAG, "sending user to home blockedPkg=$foregroundPkg")
         } catch (e: Exception) {
             Log.e(TAG, "send home failed", e)
         }
+    }
+
+    private fun showVpnLockFor(foregroundPkg: String) {
+        if (LockActivity.isLockScreenVisible && foregroundPkg == lastLockPkg) return
+        lastLockPkg = foregroundPkg
+        val intent = Intent(this, LockActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            putExtra(GenetAccessibilityService.EXTRA_BLOCKED_PACKAGE, foregroundPkg)
+        }
+        try {
+            startActivity(intent)
+            Log.d("GENET_VPN", "LOCK SCREEN SHOWN FOR $foregroundPkg")
+        } catch (e: Exception) {
+            Log.e(TAG, "showVpnLockFor failed", e)
+        }
+    }
+
+    private fun dismissVpnLockIfShowing() {
+        if (!LockActivity.isLockScreenVisible && lastLockPkg == null) return
+        sendBroadcast(Intent(GenetAccessibilityService.ACTION_DISMISS_LOCK))
+        lastLockPkg = null
+        Log.d("GENET_VPN", "LOCK SCREEN HIDDEN")
     }
 
     private fun createNotificationChannel() {

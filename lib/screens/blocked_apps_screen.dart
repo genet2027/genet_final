@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../core/config/genet_config.dart';
 import '../core/user_role.dart';
@@ -11,8 +10,6 @@ import '../models/child_entity.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
-
-const MethodChannel _channel = MethodChannel('com.example.genet_final/config');
 
 String _formatRemainingParent(int totalSeconds) {
   final m = totalSeconds ~/ 60;
@@ -364,7 +361,19 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
   Future<void> _loadInstalledApps() async {
     final showLoading = _installedApps.isEmpty;
     if (mounted && showLoading) _loadingNotifier.value = true;
-    final list = await _getInstalledApps();
+    final sid = _selectedChildId;
+    final raw = sid == null || sid.isEmpty
+        ? <Map<String, dynamic>>[]
+        : await getChildInstalledAppsFromFirebase(sid);
+    final list = raw
+        .map(
+          (e) => <String, dynamic>{
+            'package': e['packageName'],
+            'name': e['appName'],
+            'icon': '',
+          },
+        )
+        .toList();
     if (!mounted) return;
     final fp = list.map((e) => '${e['package']}|${e['name']}').join(',');
     if (fp == _lastInstalledAppsFingerprint && list.length == _installedApps.length) {
@@ -379,18 +388,6 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
     }
     _installedApps = list;
     _loadingNotifier.value = false;
-  }
-
-  Future<List<Map<String, dynamic>>> _getInstalledApps() async {
-    try {
-      final raw = await _channel.invokeMethod<List<dynamic>>(
-        'getInstalledApps',
-      );
-      if (raw == null) return [];
-      return raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-    } on PlatformException catch (_) {
-      return [];
-    }
   }
 
   Future<void> _saveBlocked() async {

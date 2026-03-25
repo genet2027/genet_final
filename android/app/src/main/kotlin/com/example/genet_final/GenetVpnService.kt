@@ -23,15 +23,40 @@ class GenetVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_STOP -> stopVpn()
-            ACTION_RESTART -> restartVpn()
-            ACTION_START, null -> startVpn()
+            ACTION_STOP -> {
+                Log.i(TAG, "VPN STOP REQUESTED")
+                Log.d("GENET_VPN", "VPN STOP REQUESTED")
+                stopVpn()
+                stopSelfResult(startId)
+                return START_NOT_STICKY
+            }
+            ACTION_RESTART -> {
+                Log.i(TAG, "VPN RESTART PATH")
+                Log.d("GENET_VPN", "VPN RESTART PATH")
+                restartVpn()
+                return START_STICKY
+            }
+            ACTION_START -> {
+                Log.i(TAG, "VPN START REQUESTED")
+                Log.d("GENET_VPN", "VPN START REQUESTED")
+                startVpn()
+                return START_STICKY
+            }
+            null -> {
+                if (!VpnState.isVpnRunning && tunInterface == null) {
+                    stopSelfResult(startId)
+                    return START_NOT_STICKY
+                }
+                return START_STICKY
+            }
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
-        stopVpn()
+        synchronized(lifecycleLock) {
+            stopVpnInternal()
+        }
         super.onDestroy()
     }
 
@@ -45,16 +70,17 @@ class GenetVpnService : VpnService() {
                 Log.w(TAG, "VPN stale state — cleaning before start")
                 stopVpnInternal()
             }
-            Log.i(TAG, "VPN starting")
             val apps = NetworkBlocker.resolveEffectiveBlockedPackages(this)
             if (apps.isEmpty()) {
-                Log.i(TAG, "No blocked apps, skipping VPN")
+                Log.w(TAG, "VPN START FAILED")
                 stopVpnInternal()
+                stopSelf()
                 return
             }
             if (prepare(this) != null) {
-                Log.w(TAG, "failed to establish VPN: consent not granted (call startVpn from Activity after user approves)")
-                VpnState.isVpnRunning = false
+                Log.w(TAG, "VPN START FAILED")
+                stopVpnInternal()
+                stopSelf()
                 return
             }
             startForegroundIfNeeded()
@@ -78,35 +104,36 @@ class GenetVpnService : VpnService() {
             val pfd = try {
                 builder.establish()
             } catch (e: Exception) {
-                Log.e(TAG, "failed to establish VPN", e)
-                stopForegroundCompat()
-                VpnState.isVpnRunning = false
+                Log.e(TAG, "VPN START FAILED", e)
+                stopVpnInternal()
+                stopSelf()
                 return
             }
             if (pfd == null) {
-                Log.e(TAG, "failed to establish VPN: establish() returned null")
-                stopForegroundCompat()
-                VpnState.isVpnRunning = false
+                Log.e(TAG, "VPN START FAILED")
+                stopVpnInternal()
+                stopSelf()
                 return
             }
             tunInterface = pfd
             VpnState.isVpnRunning = true
             NetworkBlocker.startBlackhole(pfd)
-            Log.i(TAG, "VPN started packages=${apps.size}")
+            Log.i(TAG, "VPN START SUCCESS")
+            Log.d("GENET_VPN", "VPN START SUCCESS")
         }
     }
 
     fun stopVpn() {
         synchronized(lifecycleLock) {
-            Log.i(TAG, "VPN stopping")
             stopVpnInternal()
-            Log.i(TAG, "VPN stopped")
+            Log.i(TAG, "VPN STOP SUCCESS")
+            Log.d("GENET_VPN", "VPN STOP SUCCESS")
+            stopSelf()
         }
     }
 
     fun restartVpn() {
         synchronized(lifecycleLock) {
-            Log.i(TAG, "VPN restart requested")
             stopVpnInternal()
             startVpn()
         }
@@ -122,6 +149,7 @@ class GenetVpnService : VpnService() {
         tunInterface = null
         VpnState.isVpnRunning = false
         stopForegroundCompat()
+        Log.i(TAG, "VPN STATE RESET")
     }
 
     private fun startForegroundIfNeeded() {

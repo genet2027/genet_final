@@ -16,12 +16,8 @@ import '../../widgets/language_switcher.dart';
 import '../parent/blocked_apps_times_screen.dart';
 import 'child_link_screen.dart';
 import '../content_library_screen.dart';
-import '../common/night_screen.dart';
 import '../common/role_select_screen.dart';
 import '../common/school_schedule_screen.dart';
-
-/// Route name for [NightScreen] — used to pop only this overlay when night ends.
-const String kGenetNightScreenRouteName = 'genet_night_screen';
 
 /// Child home: connection status from Firebase only. When parent disconnects, UI updates in place.
 class ChildHomeScreen extends StatefulWidget {
@@ -38,62 +34,47 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
   bool? _firebaseConnectionStatus;
   String? _linkedNameForDisplay;
 
-  /// Prevents repeated [Navigator.push] / [Navigator.pop] while night window is active (Timer / rebuilds).
-  bool _isNightScreenShown = false;
   Timer? _nightCheckTimer;
+  String? _lastBlockingStateFingerprint;
 
   @override
   void initState() {
     super.initState();
     _startFirebaseConnectionListener();
-    // Night overlay + timer: child role only (parent device must never show enforcement UI).
+    // Keep schedule-based blocking state fresh without using a second route/overlay flow.
     getUserRole().then((role) {
       if (!mounted || role != kUserRoleChild) return;
-      _nightCheckTimer = Timer.periodic(const Duration(seconds: 20), (_) => _syncNightScreen());
-      WidgetsBinding.instance.addPostFrameCallback((_) => _syncNightScreen());
+      _nightCheckTimer = Timer.periodic(
+        const Duration(seconds: 20),
+        (_) => _refreshBlockingState(),
+      );
+      WidgetsBinding.instance.addPostFrameCallback((_) => _refreshBlockingState());
     });
   }
 
-  void _syncNightScreen() {
+  void _refreshBlockingState() {
     if (!mounted) return;
-    // Child home is only for child flow; guard so no Timer/Navigator runs without child role.
-    getUserRole().then((role) {
-      if (!mounted || role != kUserRoleChild) return;
-      _syncNightScreenImpl();
-    });
+    setState(() {});
   }
 
-  void _syncNightScreenImpl() {
-    if (!mounted) return;
-    final night = context.read<NightModeService>();
-    if (!night.isLoaded) return;
-    final isNightTime = night.config.enabled && night.isNightTimeNow();
-
-    if (isNightTime && !_isNightScreenShown) {
-      _isNightScreenShown = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        final nav = Navigator.of(context);
-        if (!nav.mounted) return;
-        nav.push<void>(
-          MaterialPageRoute<void>(
-            settings: const RouteSettings(name: kGenetNightScreenRouteName),
-            fullscreenDialog: true,
-            builder: (_) => const NightScreen(),
-          ),
-        );
-      });
-      return;
-    }
-
-    if (!isNightTime && _isNightScreenShown) {
-      _isNightScreenShown = false;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        final nav = Navigator.of(context);
-        if (!nav.mounted) return;
-        nav.popUntil((route) => route.settings.name != kGenetNightScreenRouteName);
-      });
+  void _logBlockingState({
+    required bool sleepLockActive,
+    required bool isVpnActive,
+    required bool showNetworkProtectionScreenResult,
+  }) {
+    final fingerprint =
+        '$sleepLockActive|$isVpnActive|$showNetworkProtectionScreenResult';
+    if (_lastBlockingStateFingerprint == fingerprint) return;
+    _lastBlockingStateFingerprint = fingerprint;
+    debugPrint('[GenetBlockLegacy] sleepLockActive=$sleepLockActive');
+    debugPrint('[GenetBlockLegacy] isVpnActive=$isVpnActive');
+    debugPrint(
+      '[GenetBlockLegacy] showNetworkProtectionScreen=$showNetworkProtectionScreenResult',
+    );
+    if (!showNetworkProtectionScreenResult) {
+      debugPrint(
+        '[GenetBlockLegacy] screen displayed=none old_screen_triggered=false',
+      );
     }
   }
 
@@ -170,6 +151,15 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final night = context.watch<NightModeService>();
+    final sleepLockActive = night.isLoaded && night.config.enabled && night.isNightTimeNow();
+    const isVpnActive = true;
+    const showNetworkProtectionScreenResult = false;
+    _logBlockingState(
+      sleepLockActive: sleepLockActive,
+      isVpnActive: isVpnActive,
+      showNetworkProtectionScreenResult: showNetworkProtectionScreenResult,
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -219,8 +209,6 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              const Text('Child Screen Loaded', style: TextStyle(fontSize: 12, color: Colors.grey)), // DEBUG: remove after verifying correct screen
-              const SizedBox(height: 8),
               if (isConnected) ...[
                 Card(
                   elevation: 2,

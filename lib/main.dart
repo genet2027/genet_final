@@ -1,9 +1,7 @@
 import 'dart:async';
 
 import 'package:firebase_core/firebase_core.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'core/config/genet_config.dart';
@@ -44,32 +42,15 @@ class GenetApp extends StatefulWidget {
 class _GenetAppState extends State<GenetApp> with WidgetsBindingObserver {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
-  static const EventChannel _kEnforcementChannel = EventChannel('genet/enforcement');
-  StreamSubscription<dynamic>? _enforcementSub;
-
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkPermissionRecovery());
-    _enforcementSub = _kEnforcementChannel.receiveBroadcastStream().listen(
-      (event) {
-        if (kDebugMode) {
-          debugPrint('genet/enforcement: $event');
-        }
-        // Phase 2: push a full-screen block UI using event['packageName'] when role is child.
-      },
-      onError: (Object e) {
-        if (kDebugMode) {
-          debugPrint('genet/enforcement error: $e');
-        }
-      },
-    );
   }
 
   @override
   void dispose() {
-    _enforcementSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }

@@ -35,6 +35,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   bool _batteryOptimizationIgnored = true;
   bool? _vpnRunning;
   bool? _isParentRole;
+  bool _requireVpn = false;
   StreamSubscription<Map<String, dynamic>?>? _parentVpnDocSub;
   /// Last [vpnStatus] from child doc (on|off|error); parent device does not use local VPN for this.
   String? _parentRemoteVpnStatus;
@@ -90,6 +91,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
         _loadVpnRunning();
       } else {
         _bindParentVpnStatusStream();
+        _loadRequireVpn();
       }
     });
   }
@@ -110,6 +112,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
           _loadVpnRunning();
         } else {
           _bindParentVpnStatusStream();
+          _loadRequireVpn();
         }
       });
     }
@@ -123,6 +126,17 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       if (!mounted) return;
       setState(() => _vpnRunning = v);
     });
+  }
+
+  Future<void> _loadRequireVpn() async {
+    if (_isParentRole != true) return;
+    final cid = await getSelectedChildId();
+    if (cid == null || cid.isEmpty) {
+      if (mounted) setState(() => _requireVpn = false);
+      return;
+    }
+    final value = await getRequireVpnFromFirebase(cid);
+    if (mounted) setState(() => _requireVpn = value);
   }
 
   /// Linked child device → linked child id; parent device → [getSelectedChildId] (same as BlockedAppsScreen); else legacy key.
@@ -225,7 +239,9 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
         return;
       }
       await syncVpnPolicyToFirebase(parentId, cid, vpnEnabled: true);
+      await writeRequireVpnToFirebase(cid, requireVpn: true);
       await _bindParentVpnStatusStream();
+      await _loadRequireVpn();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('העדכון נשלח למכשיר הילד.')),
@@ -286,7 +302,9 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
         return;
       }
       await syncVpnPolicyToFirebase(parentId, cid, vpnEnabled: false);
+      await writeRequireVpnToFirebase(cid, requireVpn: false);
       await _bindParentVpnStatusStream();
+      await _loadRequireVpn();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('העדכון נשלח למכשיר הילד.')),
@@ -405,6 +423,15 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     if (mounted) setState(() => _permissionLockEnabled = value);
   }
 
+  Future<void> _onRequireVpnToggle(bool value) async {
+    if (_isParentRole != true) return;
+    if (value) {
+      await _onStartBlockingVpn();
+    } else {
+      await _onStopBlockingVpn();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListView(
@@ -494,6 +521,15 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
                     style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
                   ),
                   const SizedBox(height: 12),
+                  if (_isParentRole == true)
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('חייב הגנה (VPN)'),
+                      value: _requireVpn,
+                      onChanged: _onRequireVpnToggle,
+                      activeThumbColor: AppTheme.primaryBlue,
+                    ),
+                  if (_isParentRole == true) const SizedBox(height: 8),
                   FilledButton.icon(
                     onPressed: _onStartBlockingVpn,
                     icon: const Icon(Icons.shield_outlined),

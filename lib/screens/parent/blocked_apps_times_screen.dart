@@ -1,9 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/config/genet_config.dart';
 import '../../core/extension_requests.dart';
 import '../../core/user_role.dart';
 import '../../repositories/children_repository.dart';
@@ -13,8 +13,6 @@ import '../../theme/app_theme.dart';
 const String _kSleepLockEnabledKey = 'genet_sleep_lock_enabled';
 const String _kSleepLockStartKey = 'genet_sleep_lock_start';
 const String _kSleepLockEndKey = 'genet_sleep_lock_end';
-
-const MethodChannel _channel = MethodChannel('com.example.genet_final/config');
 
 String _formatRemaining(int totalSeconds) {
   final m = totalSeconds ~/ 60;
@@ -95,10 +93,7 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
       approvedUntil = await getExtensionApprovedUntil();
     }
     List<Map<String, dynamic>> installed = [];
-    try {
-      final raw = await _channel.invokeMethod<List<dynamic>>('getInstalledApps');
-      if (raw != null) installed = raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-    } on PlatformException catch (_) {}
+    installed = await GenetConfig.getInstalledApps();
     final requests = await getExtensionRequests();
     if (mounted) {
       setState(() {

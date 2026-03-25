@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -11,6 +12,10 @@ import '../vpn_remote_child.dart';
 /// Syncs parent config (PIN, Sleep Lock, blocked apps) to native Android storage
 /// so the Accessibility Service can enforce locks.
 class GenetConfig {
+  static const _channel = MethodChannel('com.example.genet_final/config');
+  static const _installedAppsEventsChannel =
+      EventChannel('com.example.genet_final/installed_apps_events');
+
   /// Persists [kUserRoleParent] / [kUserRoleChild] and sets native child mode in one step.
   static Future<void> commitUserRole(String role) async {
     await setUserRole(role);
@@ -101,7 +106,12 @@ class GenetConfig {
     }
   }
 
-  static const _channel = MethodChannel('com.example.genet_final/config');
+  static Future<void> setVpnProtectionLost(bool lost) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod('setVpnProtectionLost', {'lost': lost});
+    } on PlatformException catch (_) {}
+  }
 
   static Future<void> setPin(String pin) async {
     if (!Platform.isAndroid) return;
@@ -125,11 +135,46 @@ class GenetConfig {
     } on PlatformException catch (_) {}
   }
 
+  static Future<void> setNightModeActive(bool active) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod('setNightModeActive', {
+        'active': active,
+      });
+    } on PlatformException catch (_) {}
+  }
+
   static Future<void> setBlockedApps(List<String> packageNames) async {
     if (!Platform.isAndroid) return;
     try {
       await _channel.invokeMethod('setBlockedApps', {'packages': packageNames});
     } on PlatformException catch (_) {}
+  }
+
+  static Future<List<Map<String, dynamic>>> getInstalledApps() async {
+    if (!Platform.isAndroid) return [];
+    try {
+      final raw = await _channel.invokeMethod<List<dynamic>>('getInstalledApps');
+      if (raw == null) return [];
+      return raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } on PlatformException catch (_) {
+      return [];
+    }
+  }
+
+  static Stream<Map<String, dynamic>> watchInstalledAppsChanges() {
+    if (!Platform.isAndroid) return const Stream.empty();
+    return _installedAppsEventsChannel.receiveBroadcastStream().map((event) {
+      if (event is Map) {
+        return Map<String, dynamic>.from(event);
+      }
+      return <String, dynamic>{};
+    }).where((event) {
+      return (event['action'] as String?)?.isNotEmpty == true &&
+          (event['package'] as String?)?.isNotEmpty == true;
+    }).handleError((Object error, StackTrace stackTrace) {
+      debugPrint('[GenetApps] installed apps stream error: $error');
+    });
   }
 
   static Future<void> openAccessibilitySettings() async {

@@ -8,6 +8,9 @@ class GenetVpn {
   GenetVpn._();
 
   static const MethodChannel _channel = MethodChannel('genet/vpn');
+  static const String protectionProtected = 'protected';
+  static const String protectionVpnInactive = 'vpn_inactive';
+  static const String protectionVpnRemoved = 'vpn_removed';
 
   /// Dedupes concurrent [startVpn] calls so native is not invoked twice in parallel.
   static Future<Map<String, dynamic>?>? _inFlightStartVpn;
@@ -67,7 +70,7 @@ class GenetVpn {
     if (!Platform.isAndroid) return;
     try {
       await _channel.invokeMethod<void>('refreshVpn', {
-        if (packages != null) 'packages': packages,
+        'packages': packages,
       });
     } on PlatformException catch (_) {}
   }
@@ -79,6 +82,33 @@ class GenetVpn {
       return r ?? false;
     } on PlatformException catch (_) {
       return false;
+    }
+  }
+
+  /// True when Android reports [NetworkCapabilities.TRANSPORT_VPN] on activeNetwork.
+  static Future<bool> getVpnStatus() async {
+    if (!Platform.isAndroid) return false;
+    try {
+      final r = await _channel.invokeMethod<bool>('getVpnStatus');
+      return r ?? false;
+    } on PlatformException catch (_) {
+      return false;
+    }
+  }
+
+  /// Returns one of: [protectionProtected], [protectionVpnInactive], [protectionVpnRemoved].
+  static Future<String> getVpnProtectionStatus() async {
+    if (!Platform.isAndroid) return protectionVpnInactive;
+    try {
+      final r = await _channel.invokeMethod<String>('getVpnProtectionStatus');
+      if (r == protectionProtected ||
+          r == protectionVpnInactive ||
+          r == protectionVpnRemoved) {
+        return r!;
+      }
+      return protectionVpnInactive;
+    } on PlatformException catch (_) {
+      return protectionVpnInactive;
     }
   }
 
