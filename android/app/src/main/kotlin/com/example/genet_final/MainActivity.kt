@@ -15,6 +15,7 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.net.VpnService
 import android.os.Build
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import android.provider.Settings
 import android.util.Base64
@@ -236,7 +237,7 @@ class MainActivity : FlutterActivity() {
                 "setChildMode" -> {
                     val isChildMode = call.argument<Boolean>("isChildMode") ?: false
                     getGenetPrefs().edit().putBoolean(GenetAccessibilityService.KEY_IS_CHILD_MODE, isChildMode).apply()
-                    if (isChildMode) AppMonitorService.start(this) else AppMonitorService.stop(this)
+                    if (!isChildMode) AppMonitorService.stop(this)
                     result.success(null)
                 }
                 "getIsDeviceAdminEnabled" -> result.success(isDeviceAdminEnabled())
@@ -245,6 +246,7 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
                 "isIgnoringBatteryOptimizations" -> result.success(isIgnoringBatteryOptimizations())
+                "getElapsedRealtimeMs" -> result.success(SystemClock.elapsedRealtime())
                 else -> result.notImplemented()
             }
         }
@@ -314,9 +316,6 @@ class MainActivity : FlutterActivity() {
         super.onResume()
         if (getGenetPrefs().getBoolean(GenetAccessibilityService.KEY_REQUIRE_PARENT_UNLOCK_AFTER_REBOOT, false)) {
             startActivity(Intent(this, RebootLockActivity::class.java))
-        }
-        if (getGenetPrefs().getBoolean(GenetAccessibilityService.KEY_IS_CHILD_MODE, false)) {
-            AppMonitorService.start(this)
         }
     }
 

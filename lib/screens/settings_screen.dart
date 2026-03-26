@@ -17,9 +17,7 @@ import 'backup_support_screen.dart';
 import 'night_mode_settings_screen.dart';
 import 'pin_login_screen.dart';
 
-const String _kPermissionLockKey = 'genet_permission_lock_enabled';
-
-/// Settings tab content: entries to Night Mode, Permission Lock, Backup & Support, and Logout.
+/// Settings tab content: entries to Night Mode, VPN controls, Backup & Support, and Logout.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -28,8 +26,6 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObserver {
-  bool _permissionLockEnabled = false;
-  bool _loaded = false;
   List<String> _missingPermissions = [];
   bool _deviceAdminEnabled = false;
   bool _batteryOptimizationIgnored = true;
@@ -81,7 +77,6 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _loadPermissionLock();
     _loadPermissionsSection();
     getUserRole().then((r) {
       if (!mounted) return;
@@ -326,21 +321,18 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     if (mounted) await _loadVpnRunning();
   }
 
-  Future<void> _loadPermissionLock() async {
-    final v = await GenetConfig.getPermissionLockEnabled();
-    if (mounted) setState(() { _permissionLockEnabled = v; _loaded = true; });
-  }
-
   Future<void> _loadPermissionsSection() async {
     if (!Platform.isAndroid) return;
     final missing = await GenetConfig.getMissingPermissions();
     final deviceAdmin = await GenetConfig.getIsDeviceAdminEnabled();
     final battery = await GenetConfig.isIgnoringBatteryOptimizations();
-    if (mounted) setState(() {
+    if (mounted) {
+      setState(() {
       _missingPermissions = missing;
       _deviceAdminEnabled = deviceAdmin;
       _batteryOptimizationIgnored = battery;
     });
+    }
   }
 
   Future<bool> _verifyOrCreatePin(BuildContext context, {required bool isCreate}) async {
@@ -413,16 +405,6 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     return result ?? false;
   }
 
-  Future<void> _onPermissionLockToggle(bool value) async {
-    final hasPin = await PinStorage.hasPin();
-    final ok = await _verifyOrCreatePin(context, isCreate: !hasPin);
-    if (!ok || !mounted) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_kPermissionLockKey, value);
-    await GenetConfig.setPermissionLockEnabled(value);
-    if (mounted) setState(() => _permissionLockEnabled = value);
-  }
-
   Future<void> _onRequireVpnToggle(bool value) async {
     if (_isParentRole != true) return;
     if (value) {
@@ -450,41 +432,6 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
           subtitle: 'שעות שינה ורמת התנהגות',
         ),
         const SizedBox(height: 12),
-        RoundedCard(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.lock_outline, color: AppTheme.primaryBlue),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('נעילת הרשאות / Lock permissions', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
-                          const SizedBox(height: 4),
-                          Text(
-                            'חוסם גישה למסכי הרשאות מערכת (Usage/Overlay) כדי למנוע עקיפה.',
-                            style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (_loaded)
-                      Switch(
-                        value: _permissionLockEnabled,
-                        onChanged: _onPermissionLockToggle,
-                        activeThumbColor: AppTheme.primaryBlue,
-                      ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
         if (Platform.isAndroid) ...[
           const SizedBox(height: 20),
           Padding(

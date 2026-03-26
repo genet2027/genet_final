@@ -8,6 +8,7 @@ import '../repositories/child_link_status_repository.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
+import '../widgets/natural_text_field.dart';
 import 'add_child_by_link_screen.dart';
 
 /// Parent: list children, select active, add child, edit child, show QR + manual code for linking.
@@ -251,7 +252,7 @@ class _ChildrenManagementScreenState extends State<ChildrenManagementScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  TextField(
+                  NaturalTextField(
                     controller: firstNameController,
                     decoration: const InputDecoration(
                       labelText: 'שם פרטי',
@@ -259,7 +260,7 @@ class _ChildrenManagementScreenState extends State<ChildrenManagementScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
+                  NaturalTextField(
                     controller: lastNameController,
                     decoration: const InputDecoration(
                       labelText: 'שם משפחה',
@@ -267,7 +268,7 @@ class _ChildrenManagementScreenState extends State<ChildrenManagementScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
+                  NaturalTextField(
                     controller: ageController,
                     decoration: const InputDecoration(
                       labelText: 'גיל',
@@ -276,7 +277,7 @@ class _ChildrenManagementScreenState extends State<ChildrenManagementScreen> {
                     keyboardType: TextInputType.number,
                   ),
                   const SizedBox(height: 12),
-                  TextField(
+                  NaturalTextField(
                     controller: gradeController,
                     decoration: const InputDecoration(
                       labelText: 'כיתה',
@@ -284,7 +285,7 @@ class _ChildrenManagementScreenState extends State<ChildrenManagementScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
+                  NaturalTextField(
                     controller: schoolCodeController,
                     decoration: const InputDecoration(
                       labelText: 'קוד בית ספר',

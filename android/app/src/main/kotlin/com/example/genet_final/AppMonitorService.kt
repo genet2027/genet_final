@@ -7,7 +7,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -53,25 +52,16 @@ class AppMonitorService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
-        running = true
         handler.removeCallbacks(tickRunnable)
-        handler.post(tickRunnable)
-        return START_STICKY
+        running = false
+        isServiceRunning = false
+        stopSelf()
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
         running = false
+        isServiceRunning = false
         handler.removeCallbacks(tickRunnable)
         super.onDestroy()
     }
@@ -80,17 +70,13 @@ class AppMonitorService : Service() {
         val prefs = getSharedPreferences(GenetAccessibilityService.PREFS_NAME, MODE_PRIVATE)
         if (!prefs.getBoolean(GenetAccessibilityService.KEY_IS_CHILD_MODE, false)) {
             running = false
+            isServiceRunning = false
             handler.removeCallbacks(tickRunnable)
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
             return
         }
-        if (!UsageStatsHelper.hasUsageAccess(this)) {
-            Log.d(TAG, "current package: (usage access off)")
-            return
-        }
         val pkg = UsageStatsHelper.getForegroundPackage(this)
-        Log.d(TAG, "current package: ${pkg ?: "null"}")
         if (pkg.isNullOrBlank()) return
         val protectionLost = prefs.getBoolean(GenetAccessibilityService.KEY_VPN_PROTECTION_LOST, false)
         val sleepLockRestrictionActive =
@@ -274,18 +260,15 @@ class AppMonitorService : Service() {
         private const val TAG = "AppMonitor"
         private const val CHANNEL_ID = "app_monitor_channel"
         private const val NOTIFICATION_ID = 7101
+        @Volatile
+        private var isServiceRunning = false
 
         fun start(context: Context) {
-            val i = Intent(context, AppMonitorService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(i)
-            } else {
-                @Suppress("DEPRECATION")
-                context.startService(i)
-            }
+            return
         }
 
         fun stop(context: Context) {
+            isServiceRunning = false
             context.stopService(Intent(context, AppMonitorService::class.java))
         }
     }

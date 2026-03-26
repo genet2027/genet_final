@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/config/genet_config.dart';
 import '../core/extension_requests.dart';
 import '../models/child_entity.dart';
+import '../models/parent_message.dart';
 import 'children_repository.dart';
 
 // --- Parent ID (parent device) ---
@@ -258,6 +259,65 @@ Future<void> syncVpnPolicyToFirebase(String parentId, String childId, {required 
   }
 }
 
+List<ParentMessage> parentMessageHistoryFromChildSettings(
+  Map<String, dynamic>? data,
+) {
+  if (data == null) return const <ParentMessage>[];
+  final messages = <ParentMessage>[];
+  final rawHistory = data[_kParentMessages];
+  if (rawHistory is List) {
+    for (final entry in rawHistory) {
+      if (entry is Map) {
+        final parsed = ParentMessage.fromMap(Map<String, dynamic>.from(entry));
+        if (parsed.hasContent) {
+          messages.add(parsed);
+        }
+      }
+    }
+  }
+  final legacySingle = data['parentMessage'];
+  if (messages.isEmpty && legacySingle is Map) {
+    final parsed = ParentMessage.fromMap(Map<String, dynamic>.from(legacySingle));
+    if (parsed.hasContent) {
+      messages.add(parsed);
+    }
+  }
+  messages.sort((a, b) => a.updatedAt.compareTo(b.updatedAt));
+  return messages;
+}
+
+ParentMessage? latestParentMessageFromChildSettings(Map<String, dynamic>? data) {
+  final history = parentMessageHistoryFromChildSettings(data);
+  if (history.isEmpty) return null;
+  return history.last;
+}
+
+Future<ParentMessage> addParentMessageToFirebase(
+  String childId, {
+  required String text,
+}) async {
+  final message = ParentMessage.create(text);
+  if (childId.isEmpty || !message.hasContent) return message;
+  final ref = _childSettingsDocRef(childId);
+  await FirebaseFirestore.instance.runTransaction((transaction) async {
+    final snap = await transaction.get(ref);
+    final current = parentMessageHistoryFromChildSettings(snap.data());
+    final updated = [...current, message];
+    final trimmed =
+        updated.length > 40 ? updated.sublist(updated.length - 40) : updated;
+    transaction.set(
+      ref,
+      {
+        _kParentMessages: trimmed.map((entry) => entry.toMap()).toList(),
+        'parentMessage': FieldValue.delete(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+  });
+  return message;
+}
+
 /// Child device: report VPN outcome to the same child doc (parent reads [vpnStatus]).
 Future<void> syncChildVpnStatusToFirebase(
   String parentId,
@@ -390,8 +450,9 @@ Stream<SyncedChildData?> watchSyncedChildDataStream(String parentId, String chil
     if (approvedRaw != null) {
       for (final e in approvedRaw.entries) {
         final v = e.value;
-        if (v is int) approved[e.key] = v;
-        else if (v is num) approved[e.key] = v.toInt();
+        if (v is int) {
+          approved[e.key] = v;
+        } else if (v is num) approved[e.key] = v.toInt();
       }
     }
     final reqList = (data[_kExtensionRequests] as List?) ?? [];
@@ -595,6 +656,7 @@ const String _kChildSettingsCollection = 'child_settings';
 const String _kSleepLockSubcollection = 'sleep_lock';
 const String _kSleepLockSettingsDoc = 'settings';
 const String _kRequireVpn = 'requireVpn';
+const String _kParentMessages = 'parentMessages';
 
 DocumentReference<Map<String, dynamic>> _childSettingsDocRef(String childId) {
   return FirebaseFirestore.instance
@@ -618,7 +680,7 @@ Future<void> writeSleepLockToFirebase(
   required String endTime,
 }) async {
   if (childId.isEmpty) return;
-  final path = '${_kChildSettingsCollection}/$childId/$_kSleepLockSubcollection/$_kSleepLockSettingsDoc';
+  final path = '$_kChildSettingsCollection/$childId/$_kSleepLockSubcollection/$_kSleepLockSettingsDoc';
   developer.log('SLEEP_LOCK parent write selectedChildId=$childId path=$path isActive=$isActive start=$startTime end=$endTime', name: 'Sync');
   await _sleepLockDocRef(childId).set(
     {
@@ -653,7 +715,7 @@ Future<Map<String, dynamic>?> getSleepLockFromFirebase(String childId) async {
 /// Child device: real-time sleep lock from Firebase (same [childId] as [getLinkedChildId]).
 Stream<Map<String, dynamic>?> watchChildSleepLockStream(String childId) {
   if (childId.isEmpty) return Stream.value(null);
-  final path = '${_kChildSettingsCollection}/$childId/$_kSleepLockSubcollection/$_kSleepLockSettingsDoc';
+  final path = '$_kChildSettingsCollection/$childId/$_kSleepLockSubcollection/$_kSleepLockSettingsDoc';
   developer.log('SLEEP_LOCK child listen childId=$childId path=$path', name: 'Sync');
   return _sleepLockDocRef(childId).snapshots().map((snap) {
     if (!snap.exists) {
@@ -671,7 +733,7 @@ Stream<Map<String, dynamic>?> watchChildSleepLockStream(String childId) {
 
 Future<void> writeRequireVpnToFirebase(String childId, {required bool requireVpn}) async {
   if (childId.isEmpty) return;
-  final path = '${_kChildSettingsCollection}/$childId';
+  final path = '$_kChildSettingsCollection/$childId';
   developer.log(
     'REQUIRE_VPN parent write childId=$childId path=$path requireVpn=$requireVpn',
     name: 'Sync',
@@ -691,9 +753,40 @@ Future<bool> getRequireVpnFromFirebase(String childId) async {
   return snap.data()?[_kRequireVpn] == true;
 }
 
+Future<List<ParentMessage>> getParentMessageHistoryFromFirebase(
+  String childId,
+) async {
+  if (childId.isEmpty) return const <ParentMessage>[];
+  final snap = await _childSettingsDocRef(childId).get();
+  return parentMessageHistoryFromChildSettings(snap.data());
+}
+
+DocumentReference<Map<String, dynamic>> _trustedTimeDocRef(String childId) {
+  return _childSettingsDocRef(childId).collection('trusted_time').doc('reference');
+}
+
+Future<DateTime?> fetchTrustedTimeFromFirebase(String childId) async {
+  if (childId.isEmpty) return null;
+  final ref = _trustedTimeDocRef(childId);
+  try {
+    await ref.set({
+      'serverNow': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    final snap = await ref.get(const GetOptions(source: Source.server));
+    final raw = snap.data()?['serverNow'];
+    if (raw is Timestamp) {
+      return raw.toDate();
+    }
+  } catch (_) {
+    return null;
+  }
+  return null;
+}
+
 Stream<Map<String, dynamic>?> watchChildSettingsStream(String childId) {
   if (childId.isEmpty) return Stream.value(null);
-  final path = '${_kChildSettingsCollection}/$childId';
+  final path = '$_kChildSettingsCollection/$childId';
   developer.log('CHILD_SETTINGS child listen childId=$childId path=$path', name: 'Sync');
   return _childSettingsDocRef(childId).snapshots().map((snap) {
     final d = snap.data();

@@ -1,14 +1,22 @@
 import 'package:flutter/material.dart';
 
 import '../../theme/app_theme.dart';
+import '../../widgets/parent_message_history_section.dart';
 import '../sleep_lock_screen.dart';
 import '../content_library_screen.dart';
 import 'blocked_apps_screen.dart';
 import 'children_management_screen.dart';
 
 /// Parent Dashboard: Stack + gradient, GENET (English), יומי card, GridView of 3 cards, green banner.
-class ParentDashboardTab extends StatelessWidget {
+class ParentDashboardTab extends StatefulWidget {
   const ParentDashboardTab({super.key});
+
+  @override
+  State<ParentDashboardTab> createState() => _ParentDashboardTabState();
+}
+
+class _ParentDashboardTabState extends State<ParentDashboardTab> {
+  int _messageRefreshKey = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -64,7 +72,14 @@ class ParentDashboardTab extends StatelessWidget {
                 const SizedBox(height: 20),
                 _YomiCard(),
                 const SizedBox(height: 16),
-                _ManagementButton(),
+                _ManagementButton(
+                  onChildrenUpdated:
+                      () => setState(() => _messageRefreshKey++),
+                ),
+                const SizedBox(height: 16),
+                ParentMessageHistorySection(
+                  refreshKeyValue: _messageRefreshKey,
+                ),
                 const SizedBox(height: 20),
                 SizedBox(
                   height: 120,
@@ -193,6 +208,10 @@ class _YomiCard extends StatelessWidget {
 }
 
 class _ManagementButton extends StatelessWidget {
+  const _ManagementButton({this.onChildrenUpdated});
+
+  final VoidCallback? onChildrenUpdated;
+
   @override
   Widget build(BuildContext context) {
     return Material(
@@ -205,7 +224,7 @@ class _ManagementButton extends StatelessWidget {
             MaterialPageRoute(
               builder: (_) => const ChildrenManagementScreen(),
             ),
-          );
+          ).then((_) => onChildrenUpdated?.call());
         },
         borderRadius: BorderRadius.circular(14),
         child: Padding(

@@ -431,8 +431,9 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
     await saveExtensionApprovedUntil(map, childId);
     final list = await getExtensionRequests();
     final idx = list.indexWhere((e) => e.id == req.id);
-    if (idx >= 0)
+    if (idx >= 0) {
       list[idx] = list[idx].copyWith(status: ExtensionRequestStatus.approved);
+    }
     await saveExtensionRequests(list);
     if (parentId != null) {
       await updateExtensionRequestInFirebase(
@@ -462,8 +463,9 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
     final parentId = _parentId;
     final list = await getExtensionRequests();
     final idx = list.indexWhere((e) => e.id == req.id);
-    if (idx >= 0)
+    if (idx >= 0) {
       list[idx] = list[idx].copyWith(status: ExtensionRequestStatus.rejected);
+    }
     await saveExtensionRequests(list);
     if (parentId != null && childId != null) {
       await updateExtensionRequestInFirebase(
@@ -541,7 +543,7 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                     sliver: ValueListenableBuilder<int>(
                       valueListenable: _sectionRequests,
-                      builder: (context, _, __) {
+                      builder: (context, _, _) {
                         final childIds = _currentChildIds;
                         final pendingRequests = _extensionRequests
                             .where((r) =>
@@ -720,7 +722,7 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
                   ),
                   ValueListenableBuilder<int>(
                     valueListenable: _sectionApps,
-                    builder: (context, _, __) {
+                    builder: (context, _, _) {
                       debugPrint('[GenetBlocked] blocked apps list rebuild');
                       if (_selectedChildId == null ||
                           _selectedChildId!.isEmpty) {

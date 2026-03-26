@@ -31,16 +31,25 @@ class VpnRemoteChildPolicy {
   }
 
   /// Effective packages to pass to native VPN: blocked list minus active temporary approvals.
-  static List<String> effectiveBlockedPackages(SyncedChildData data) {
-    return effectiveBlockedFromLists(data.blockedPackages, data.extensionApproved);
+  static List<String> effectiveBlockedPackages(
+    SyncedChildData data, {
+    int? currentTimeMs,
+  }) {
+    return effectiveBlockedFromLists(
+      data.blockedPackages,
+      data.extensionApproved,
+      currentTimeMs: currentTimeMs,
+    );
   }
 
   /// Same rule as [effectiveBlockedPackages] for prefs-only sync (e.g. [GenetConfig.syncToNative]).
   static List<String> effectiveBlockedFromLists(
     List<String> rawBlocked,
     Map<String, int> extensionApproved,
-  ) {
-    final now = DateTime.now().millisecondsSinceEpoch;
+    {
+    int? currentTimeMs,
+  }) {
+    final now = currentTimeMs ?? DateTime.now().millisecondsSinceEpoch;
     final out = <String>[];
     for (final pkg in rawBlocked) {
       final until = extensionApproved[pkg] ?? 0;
@@ -56,6 +65,7 @@ class VpnRemoteChildPolicy {
   static Future<String> apply(
     SyncedChildData data, {
     bool? overrideVpnEnabled,
+    int? currentTimeMs,
   }) async {
     if (!Platform.isAndroid) return 'off';
     final role = await getUserRole();
@@ -70,7 +80,8 @@ class VpnRemoteChildPolicy {
 
     final vpnEnabled = overrideVpnEnabled ?? data.vpnEnabled;
     final rawBlocked = data.blockedPackages;
-    final effective = effectiveBlockedPackages(data);
+    final effective =
+        effectiveBlockedPackages(data, currentTimeMs: currentTimeMs);
     final effSorted = List<String>.from(effective)..sort();
     final effKey = '$vpnEnabled|${effSorted.join(',')}';
 
@@ -84,7 +95,7 @@ class VpnRemoteChildPolicy {
       _lastPushedMsg = null;
     }
 
-    final now = DateTime.now().millisecondsSinceEpoch;
+    final now = currentTimeMs ?? DateTime.now().millisecondsSinceEpoch;
     final newEffSet = effective.toSet();
     final prev = _lastEffectiveBlockedSet;
     for (final pkg in rawBlocked) {

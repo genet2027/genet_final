@@ -241,6 +241,16 @@ class GenetConfig {
     }
   }
 
+  static Future<int?> getElapsedRealtimeMs() async {
+    if (!Platform.isAndroid) return null;
+    try {
+      final r = await _channel.invokeMethod<int>('getElapsedRealtimeMs');
+      return r;
+    } on PlatformException catch (_) {
+      return null;
+    }
+  }
+
   static Future<List<String>> getMissingPermissions() async {
     if (!Platform.isAndroid) return [];
     try {

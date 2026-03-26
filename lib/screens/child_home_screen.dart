@@ -10,13 +10,17 @@ import '../core/config/genet_config.dart';
 import '../core/genet_vpn.dart';
 import '../core/user_role.dart';
 import '../core/vpn_remote_child.dart';
+import '../features/behavior/enums/behavior_event_type.dart';
+import '../features/behavior/services/behavior_logger.dart';
 import '../l10n/app_localizations.dart';
 import '../models/child_model.dart';
+import '../models/parent_message.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../services/night_mode_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/language_switcher.dart';
+import '../widgets/natural_text_field.dart';
 import 'blocked_apps_times_screen.dart';
 import 'child_link_screen.dart';
 import 'content_library_screen.dart';
@@ -24,7 +28,7 @@ import 'night_screen.dart';
 import 'role_select_screen.dart';
 import 'school_schedule_screen.dart';
 
-enum ChildProtectionState { free, sleepLock, vpnRequired, appBlocked }
+enum ChildProtectionState { free, sleepLock, vpnRequired, timeTampered, appBlocked }
 
 /// Child home: connection status from Firebase only. When parent disconnects, UI updates in place.
 class ChildHomeScreen extends StatefulWidget {
@@ -35,6 +39,9 @@ class ChildHomeScreen extends StatefulWidget {
 }
 
 class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingObserver {
+  static const int _trustedTimeRefreshIntervalMs = 10 * 60 * 1000;
+  static const int _timeTamperToleranceMs = 90 * 1000;
+
   static const EventChannel _enforcementChannel = EventChannel(
     'genet/enforcement',
   );
@@ -71,6 +78,16 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
   String _vpnIndicatorStatus = 'off';
   bool _sleepLockActive = false;
   String? _currentForegroundApp;
+  ParentMessage? _parentMessage;
+  DateTime _lastProtectionEvaluationTime = DateTime.now();
+  DateTime? _lastTrustedTime;
+  int? _lastTrustedElapsedRealtimeMs;
+  int? _lastTrustedRefreshElapsedRealtimeMs;
+  DateTime? _lastDeviceTimeSnapshot;
+  int? _lastDeviceElapsedRealtimeMs;
+  bool _timeTamperingDetected = false;
+  String? _timeTamperingReason;
+  final BehaviorLogger _behaviorLogger = BehaviorLogger();
 
   /// Skip [setState] when visible VPN/UI fields unchanged.
   String? _lastChildHomeUiFingerprint;
@@ -126,8 +143,6 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
       final type = payload['type'] as String? ?? '';
       final packageName = payload['packageName'] as String? ?? '';
       if (type != 'app_blocked' || packageName.isEmpty) return;
-      debugPrint('[GenetProtect] enforcement event type=$type pkg=$packageName');
-      setState(() => _currentForegroundApp = packageName);
     });
   }
 
@@ -176,6 +191,104 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     await GenetConfig.setVpnProtectionLost(false);
   }
 
+  Future<int> _getElapsedRealtimeMs() async {
+    final monotonic = await GenetConfig.getElapsedRealtimeMs();
+    return monotonic ?? DateTime.now().millisecondsSinceEpoch;
+  }
+
+  DateTime? _projectTrustedTime(int elapsedRealtimeMs) {
+    final trustedTime = _lastTrustedTime;
+    final trustedElapsed = _lastTrustedElapsedRealtimeMs;
+    if (trustedTime == null || trustedElapsed == null) return null;
+    final deltaMs = elapsedRealtimeMs - trustedElapsed;
+    if (deltaMs <= 0) return trustedTime;
+    return trustedTime.add(Duration(milliseconds: deltaMs));
+  }
+
+  bool _shouldRefreshTrustedTime(int elapsedRealtimeMs) {
+    final lastRefresh = _lastTrustedRefreshElapsedRealtimeMs;
+    if (lastRefresh == null) return true;
+    return elapsedRealtimeMs - lastRefresh >= _trustedTimeRefreshIntervalMs;
+  }
+
+  void _updateProtectionTimeState({
+    required DateTime effectiveTime,
+    required bool tamperingDetected,
+    required String? tamperingReason,
+  }) {
+    final tamperingChanged = _timeTamperingDetected != tamperingDetected;
+    final previousReason = _timeTamperingReason;
+    _lastProtectionEvaluationTime = effectiveTime;
+    _timeTamperingDetected = tamperingDetected;
+    _timeTamperingReason = tamperingReason;
+    if (tamperingChanged) {
+      debugPrint('[GenetTime] tamperingDetected=$tamperingDetected');
+      debugPrint('[GenetTime] reason=${tamperingReason ?? 'none'}');
+      if (mounted) {
+        setState(() {});
+      }
+    } else if (previousReason != tamperingReason) {
+      debugPrint('[GenetTime] reason=${tamperingReason ?? 'none'}');
+    }
+  }
+
+  Future<DateTime> _resolveProtectionTime({
+    bool forceTrustedRefresh = false,
+  }) async {
+    final elapsedRealtimeMs = await _getElapsedRealtimeMs();
+    final deviceNow = DateTime.now();
+    String? tamperingReason;
+
+    if (_lastDeviceTimeSnapshot != null && _lastDeviceElapsedRealtimeMs != null) {
+      final expectedDeltaMs = elapsedRealtimeMs - _lastDeviceElapsedRealtimeMs!;
+      final actualDeltaMs =
+          deviceNow.millisecondsSinceEpoch -
+          _lastDeviceTimeSnapshot!.millisecondsSinceEpoch;
+      final driftMs = (actualDeltaMs - expectedDeltaMs).abs();
+      if (expectedDeltaMs >= 0 && driftMs > _timeTamperToleranceMs) {
+        tamperingReason = 'local_clock_jump';
+      }
+    }
+
+    var trustedNow = _projectTrustedTime(elapsedRealtimeMs);
+    if (forceTrustedRefresh || _shouldRefreshTrustedTime(elapsedRealtimeMs)) {
+      final childId = await getLinkedChildId();
+      if (childId != null && childId.isNotEmpty) {
+        final fetchedTrustedTime = await fetchTrustedTimeFromFirebase(childId);
+        if (fetchedTrustedTime != null) {
+          _lastTrustedTime = fetchedTrustedTime;
+          _lastTrustedElapsedRealtimeMs = elapsedRealtimeMs;
+          _lastTrustedRefreshElapsedRealtimeMs = elapsedRealtimeMs;
+          trustedNow = fetchedTrustedTime;
+          debugPrint(
+            '[GenetTime] trusted time refreshed=${fetchedTrustedTime.toIso8601String()}',
+          );
+        } else {
+          debugPrint('[GenetTime] trusted time unavailable, using safe fallback');
+        }
+      }
+    }
+
+    if (trustedNow != null) {
+      final trustedDriftMs =
+          (deviceNow.millisecondsSinceEpoch - trustedNow.millisecondsSinceEpoch)
+              .abs();
+      if (trustedDriftMs > _timeTamperToleranceMs) {
+        tamperingReason ??= 'trusted_time_mismatch';
+      }
+    }
+
+    _lastDeviceTimeSnapshot = deviceNow;
+    _lastDeviceElapsedRealtimeMs = elapsedRealtimeMs;
+    final effectiveTime = trustedNow ?? deviceNow;
+    _updateProtectionTimeState(
+      effectiveTime: effectiveTime,
+      tamperingDetected: tamperingReason != null,
+      tamperingReason: tamperingReason,
+    );
+    return effectiveTime;
+  }
+
   Future<String> handleSleepLockState({
     SyncedChildData? data,
   }) async {
@@ -189,26 +302,36 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
       await night.load();
       if (!mounted) return _vpnIndicatorStatus;
     }
+    final previousTamperingDetected = _timeTamperingDetected;
     final sleepEnabled = night.config.enabled;
     final sleepStartTime = night.config.startTime;
     final sleepEndTime = night.config.endTime;
-    final now = DateTime.now();
+    final now = await _resolveProtectionTime();
     final insideSleepWindow =
-        sleepEnabled && _sleepLockTimeInRange(sleepStartTime, sleepEndTime);
+        sleepEnabled &&
+        _sleepLockTimeInRange(
+          sleepStartTime,
+          sleepEndTime,
+          currentTime: now,
+        );
     final sleepLockActive = insideSleepWindow;
-    final effectiveVpnEnabled = sleepLockActive;
+    final restrictionActive = sleepLockActive || _timeTamperingDetected;
+    final effectiveVpnEnabled = restrictionActive;
     final currentProtectionStatus = await GenetVpn.getVpnProtectionStatus();
     final currentVpnActive =
         currentProtectionStatus == GenetVpn.protectionProtected;
+    final previousRestrictionActive =
+        _sleepLockActive || previousTamperingDetected;
+    final nextRestrictionActive = restrictionActive;
     final actionParts = <String>[];
     if (effectiveVpnEnabled && !currentVpnActive) {
       actionParts.add('start vpn');
     } else if (!effectiveVpnEnabled && currentVpnActive) {
       actionParts.add('stop vpn');
     }
-    if (_sleepLockActive != sleepLockActive) {
+    if (previousRestrictionActive != nextRestrictionActive) {
       actionParts.add(
-        sleepLockActive ? 'enable restriction' : 'disable restriction',
+        nextRestrictionActive ? 'enable restriction' : 'disable restriction',
       );
     }
     final actionTaken = actionParts.isEmpty ? 'no change' : actionParts.join(' + ');
@@ -218,18 +341,21 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     debugPrint('[GenetVpn] current time=${_formatCurrentTime(now)}');
     debugPrint('[GenetVpn] insideSleepWindow=$insideSleepWindow');
     debugPrint('[GenetVpn] sleepLockActive final value=$sleepLockActive');
+    debugPrint('[GenetTime] timeTamperingDetected=$_timeTamperingDetected');
+    debugPrint('[GenetTime] effectiveProtectionTime=${now.toIso8601String()}');
     debugPrint('[GenetVpn] current VPN state=$currentProtectionStatus');
-    debugPrint('[GenetVpn] restriction mode active=$sleepLockActive');
+    debugPrint('[GenetVpn] restriction mode active=$restrictionActive');
     debugPrint('[GenetVpn] action taken: $actionTaken');
     if (_sleepLockActive != sleepLockActive && mounted) {
       setState(() => _sleepLockActive = sleepLockActive);
     } else {
       _sleepLockActive = sleepLockActive;
     }
-    await GenetConfig.setNightModeActive(sleepLockActive);
+    await GenetConfig.setNightModeActive(restrictionActive);
     return VpnRemoteChildPolicy.apply(
       synced,
       overrideVpnEnabled: effectiveVpnEnabled,
+      currentTimeMs: now.millisecondsSinceEpoch,
     );
   }
 
@@ -322,17 +448,21 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
   }) {
     final sortedBlockedApps = List<String>.from(blockedApps)..sort();
     final fingerprint =
-        '${_vpnProtectionStatus ?? 'unknown'}|$sleepLockActive|$isVpnActive|${sortedBlockedApps.join(",")}|${currentForegroundApp ?? ''}|${currentTime.hour}:${currentTime.minute}';
-    final state = switch ((sleepLockActive, isVpnActive, currentForegroundApp)) {
-      (true, _, _) => ChildProtectionState.sleepLock,
-      (false, false, _) => ChildProtectionState.vpnRequired,
-      (false, true, final String app)
-          when app.isNotEmpty && sortedBlockedApps.contains(app) =>
-        ChildProtectionState.appBlocked,
-      _ => ChildProtectionState.free,
-    };
+        '${_vpnProtectionStatus ?? 'unknown'}|$sleepLockActive|$isVpnActive|$_timeTamperingDetected|${sortedBlockedApps.join(",")}|${currentForegroundApp ?? ''}|${currentTime.hour}:${currentTime.minute}';
+    late final ChildProtectionState state;
+    if (_timeTamperingDetected) {
+      state = ChildProtectionState.timeTampered;
+    } else if (sleepLockActive) {
+      state = ChildProtectionState.sleepLock;
+    } else if (!isVpnActive) {
+      state = ChildProtectionState.vpnRequired;
+    } else {
+      state = ChildProtectionState.free;
+    }
     if (_lastBlockingStateFingerprint == fingerprint) return state;
     _lastBlockingStateFingerprint = fingerprint;
+    debugPrint('[GenetTime] timeTamperingDetected=$_timeTamperingDetected');
+    debugPrint('[GenetTime] tamperingReason=${_timeTamperingReason ?? 'none'}');
     debugPrint('[GenetProtect] sleepLockActive=$sleepLockActive');
     debugPrint('[GenetProtect] isVpnActive=$isVpnActive');
     debugPrint('[GenetProtect] blockedApps=${sortedBlockedApps.join(",")}');
@@ -352,8 +482,24 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     );
   }
 
+  Future<void> _logBehaviorEvent({
+    required BehaviorEventType eventType,
+    String? appPackage,
+    Map<String, dynamic>? metadata,
+  }) async {
+    final childId = await getLinkedChildId();
+    if (childId == null || childId.isEmpty) return;
+    await _behaviorLogger.logEvent(
+      childId: childId,
+      eventType: eventType,
+      appPackage: appPackage,
+      metadata: metadata,
+    );
+  }
+
   Widget _showNetworkProtectionScreen({
     required NetworkProtectionBlockReason reason,
+    String? message,
   }) {
     return showNetworkProtectionScreen(
       reason: reason,
@@ -362,6 +508,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
               ? _onApproveNetworkProtection
               : null,
       onOpenContentLibrary: _openBlockedContentLibrary,
+      message: message,
     );
   }
 
@@ -375,6 +522,25 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
             '[GenetProtect] action taken=ensure vpn on + enable restriction + no vpn screen',
           );
           unawaited(handleSleepLockState());
+          unawaited(
+            _logBehaviorEvent(
+              eventType: BehaviorEventType.protectionActivated,
+              metadata: const {
+                'state': 'sleepLock',
+              },
+            ),
+          );
+          if (_currentForegroundApp != null && _currentForegroundApp!.isNotEmpty) {
+            unawaited(
+              _logBehaviorEvent(
+                eventType: BehaviorEventType.sleepViolation,
+                appPackage: _currentForegroundApp,
+                metadata: const {
+                  'state': 'sleepLock',
+                },
+              ),
+            );
+          }
         }
         return null;
       case ChildProtectionState.vpnRequired:
@@ -382,19 +548,55 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
           debugPrint(
             '[GenetProtect] action taken=show network protection required',
           );
+          unawaited(
+            _logBehaviorEvent(
+              eventType: BehaviorEventType.vpnDisabled,
+              metadata: const {
+                'state': 'vpnRequired',
+              },
+            ),
+          );
+          unawaited(
+            _logBehaviorEvent(
+              eventType: BehaviorEventType.protectionActivated,
+              metadata: const {
+                'state': 'vpnRequired',
+              },
+            ),
+          );
         }
         return _showNetworkProtectionScreen(
           reason: NetworkProtectionBlockReason.vpn,
         );
+      case ChildProtectionState.timeTampered:
+        if (changed) {
+          debugPrint('[GenetTime] action taken=block app due to time tampering');
+          unawaited(
+            _logBehaviorEvent(
+              eventType: BehaviorEventType.protectionActivated,
+              metadata: {
+                'state': 'timeTampered',
+                'reason': _timeTamperingReason ?? 'unknown',
+              },
+            ),
+          );
+        }
+        return _showNetworkProtectionScreen(
+          reason: NetworkProtectionBlockReason.other,
+          message:
+              'זוהה שינוי חשוד בשעון המכשיר. ההגבלות נשארות פעילות עד שהזמן יתייצב.',
+        );
       case ChildProtectionState.appBlocked:
         if (changed) {
           debugPrint('[GenetProtect] action taken=show app blocking behavior');
+          _currentForegroundApp = null;
         }
         return null;
       case ChildProtectionState.free:
         if (changed) {
           debugPrint('[GenetProtect] action taken=remove all blocking');
         }
+        _currentForegroundApp = null;
         return null;
     }
   }
@@ -472,7 +674,10 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
       if (!mounted || role != kUserRoleChild || !Platform.isAndroid) return;
       final d = _lastSyncedForVpn;
       if (d == null || d.blockedPackages.isEmpty) return;
-      final now = DateTime.now().millisecondsSinceEpoch;
+      final now =
+          (_projectTrustedTime(await _getElapsedRealtimeMs()) ??
+                  _lastProtectionEvaluationTime)
+              .millisecondsSinceEpoch;
       final anyActive =
           d.extensionApproved.entries.any((e) => (e.value) > now);
       if (!anyActive && !_extensionActiveLastTick) return;
@@ -531,6 +736,13 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
       setState(() => _requireVpn = requireVpn);
       unawaited(_pollVpnStatus());
     }
+    final nextParentMessage = latestParentMessageFromChildSettings(data);
+    final currentUpdatedAt = _parentMessage?.updatedAt.millisecondsSinceEpoch;
+    final nextUpdatedAt = nextParentMessage?.updatedAt.millisecondsSinceEpoch;
+    if (_parentMessage?.body != nextParentMessage?.body ||
+        currentUpdatedAt != nextUpdatedAt) {
+      setState(() => _parentMessage = nextParentMessage);
+    }
     final sleepLockRaw = data['sleepLock'];
     if (sleepLockRaw is Map<String, dynamic>) {
       await _applySleepLockSnapshot(sleepLockRaw);
@@ -540,8 +752,12 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
   }
 
   /// Same time-window logic as [NightModeService.isNightTimeNow] but without requiring `enabled`.
-  bool _sleepLockTimeInRange(String startTime, String endTime) {
-    final now = DateTime.now();
+  bool _sleepLockTimeInRange(
+    String startTime,
+    String endTime, {
+    required DateTime currentTime,
+  }) {
+    final now = currentTime;
     final start = _parseTimeParts(startTime);
     final end = _parseTimeParts(endTime);
     final nowMinutes = now.hour * 60 + now.minute;
@@ -565,7 +781,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     if (!mounted || data == null) return;
     // ignore: avoid_print
     print('SLEEP LOCK RECEIVED: $data');
-    final now = DateTime.now();
+    final now = _lastProtectionEvaluationTime;
     // ignore: avoid_print
     print(
       'CURRENT TIME: ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}',
@@ -573,7 +789,12 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     final isActive = data['isActive'] as bool? ?? false;
     final startTime = data['startTime'] as String? ?? '22:00';
     final endTime = data['endTime'] as String? ?? '07:00';
-    final isInRange = isActive && _sleepLockTimeInRange(startTime, endTime);
+    final isInRange = isActive &&
+        _sleepLockTimeInRange(
+          startTime,
+          endTime,
+          currentTime: now,
+        );
     // ignore: avoid_print
     print('IS IN RANGE: $isInRange');
     if (!mounted) return;
@@ -738,6 +959,15 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
       _requireVpn = false;
       _sleepLockActive = false;
       _currentForegroundApp = null;
+      _parentMessage = null;
+      _lastProtectionEvaluationTime = DateTime.now();
+      _lastTrustedTime = null;
+      _lastTrustedElapsedRealtimeMs = null;
+      _lastTrustedRefreshElapsedRealtimeMs = null;
+      _lastDeviceTimeSnapshot = null;
+      _lastDeviceElapsedRealtimeMs = null;
+      _timeTamperingDetected = false;
+      _timeTamperingReason = null;
       _vpnProtectionStatus = null;
       _vpnPermissionGranted = null;
       _vpnRunningOnDevice = null;
@@ -832,7 +1062,12 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
   Future<void> _onApproveNetworkProtection() async {
     final d = _lastSyncedForVpn;
     if (d == null || !_requireVpn || d.blockedPackages.isEmpty) return;
-    await GenetVpn.setBlockedApps(VpnRemoteChildPolicy.effectiveBlockedPackages(d));
+    await GenetVpn.setBlockedApps(
+      VpnRemoteChildPolicy.effectiveBlockedPackages(
+        d,
+        currentTimeMs: _lastProtectionEvaluationTime.millisecondsSinceEpoch,
+      ),
+    );
     if (await GenetVpn.isVpnPermissionGranted()) {
       debugPrint('[GenetVpn] approval button: permission already granted, apply only (no startVpn for consent)');
       debugPrint('[GenetVpn] result of VpnService.prepare()=already_granted');
@@ -898,21 +1133,27 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     context.watch<NightModeService>();
     final isVpnActive = _vpnProtectionStatus == GenetVpn.protectionProtected;
     final sleepLockActive = _sleepLockActive;
+    final protectionTime = _lastProtectionEvaluationTime;
     final blockedApps = _lastSyncedForVpn == null
         ? const <String>[]
-        : VpnRemoteChildPolicy.effectiveBlockedPackages(_lastSyncedForVpn!);
+        : VpnRemoteChildPolicy.effectiveBlockedPackages(
+            _lastSyncedForVpn!,
+            currentTimeMs: protectionTime.millisecondsSinceEpoch,
+          );
     final protectionState = evaluateChildProtectionState(
       sleepLockActive: sleepLockActive,
       isVpnActive: isVpnActive,
       blockedApps: blockedApps,
       currentForegroundApp: _currentForegroundApp,
-      currentTime: DateTime.now(),
+      currentTime: protectionTime,
     );
     final protectionUi = applyProtectionState(protectionState);
 
     if (protectionUi != null) {
       return protectionUi;
     }
+
+    final parentMessage = _parentMessage;
 
     return Scaffold(
             appBar: AppBar(
@@ -1120,7 +1361,8 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
                 _ChildInfoCard(model: child),
                 const SizedBox(height: 16),
               ],
-              const SizedBox(height: 8),
+              _ParentMessageCard(message: parentMessage),
+              const SizedBox(height: 16),
               _MenuCard(
                 title: l10n.scheduleTomorrow,
                 icon: Icons.calendar_today_rounded,
@@ -1226,12 +1468,120 @@ class _InfoRow extends StatelessWidget {
             child: Text(
               value,
               style: const TextStyle(fontSize: 14),
-              textDirection: TextDirection.rtl,
+              textDirection: naturalTextDirectionFor(value),
+              textAlign: TextAlign.start,
             ),
           ),
         ],
       ),
     );
+  }
+}
+
+class _ParentMessageCard extends StatelessWidget {
+  const _ParentMessageCard({required this.message});
+
+  final ParentMessage? message;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasMessage = message != null && message!.hasContent;
+    final theme = Theme.of(context);
+
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(20),
+      elevation: 1,
+      shadowColor: Colors.black.withValues(alpha: 0.04),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: LinearGradient(
+            colors: [
+              AppTheme.lightBlue.withValues(alpha: 0.42),
+              Colors.white,
+            ],
+            begin: Alignment.topRight,
+            end: Alignment.bottomLeft,
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.92),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.favorite_rounded,
+                      color: AppTheme.primaryBlue.withValues(alpha: 0.82),
+                      size: 18,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Message from Parent',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: Colors.blueGrey.shade900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                hasMessage
+                    ? message!.body
+                    : 'A message from your parent will appear here',
+                maxLines: hasMessage ? 3 : 2,
+                overflow: TextOverflow.ellipsis,
+                textDirection: naturalTextDirectionFor(
+                  hasMessage ? message!.body : 'A message from your parent will appear here',
+                ),
+                textAlign: TextAlign.start,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  height: 1.45,
+                  color: hasMessage
+                      ? Colors.blueGrey.shade800
+                      : Colors.blueGrey.shade500,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                hasMessage
+                    ? _formatUpdatedLabel(message!.updatedAt)
+                    : 'No message yet',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: Colors.blueGrey.shade500,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatUpdatedLabel(DateTime updatedAt) {
+    final now = DateTime.now();
+    final diff = now.difference(updatedAt);
+    if (diff.inMinutes < 1) return 'updated just now';
+    if (diff.inHours < 1) return 'updated recently';
+    if (diff.inHours < 24) return 'updated ${diff.inHours}h ago';
+    if (diff.inDays == 1) return 'updated yesterday';
+    final month = updatedAt.month.toString().padLeft(2, '0');
+    final day = updatedAt.day.toString().padLeft(2, '0');
+    return 'updated on $day/$month';
   }
 }
 

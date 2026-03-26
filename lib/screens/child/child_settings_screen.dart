@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../models/child_model.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/natural_text_field.dart';
 
 /// Child definition screen (Parent only). שם, גיל, כיתה, קוד בית ספר. Saves to SharedPreferences and pops.
 class ChildSettingsScreen extends StatefulWidget {
@@ -73,16 +74,15 @@ class _ChildSettingsScreenState extends State<ChildSettingsScreen> {
         body: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            TextField(
+            NaturalTextField(
               controller: _nameController,
               decoration: const InputDecoration(
                 labelText: 'שם',
                 border: OutlineInputBorder(),
               ),
-              textDirection: TextDirection.rtl,
             ),
             const SizedBox(height: 16),
-            TextField(
+            NaturalTextField(
               controller: _ageController,
               decoration: const InputDecoration(
                 labelText: 'גיל',
@@ -90,25 +90,22 @@ class _ChildSettingsScreenState extends State<ChildSettingsScreen> {
               ),
               keyboardType: TextInputType.number,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              textDirection: TextDirection.rtl,
             ),
             const SizedBox(height: 16),
-            TextField(
+            NaturalTextField(
               controller: _gradeController,
               decoration: const InputDecoration(
                 labelText: 'כיתה',
                 border: OutlineInputBorder(),
               ),
-              textDirection: TextDirection.rtl,
             ),
             const SizedBox(height: 16),
-            TextField(
+            NaturalTextField(
               controller: _schoolCodeController,
               decoration: const InputDecoration(
                 labelText: 'קוד בית ספר',
                 border: OutlineInputBorder(),
               ),
-              textDirection: TextDirection.rtl,
             ),
             const SizedBox(height: 24),
             FilledButton(
