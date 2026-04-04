@@ -173,7 +173,7 @@ class GenetConfig {
       return (event['action'] as String?)?.isNotEmpty == true &&
           (event['package'] as String?)?.isNotEmpty == true;
     }).handleError((Object error, StackTrace stackTrace) {
-      debugPrint('[GenetApps] installed apps stream error: $error');
+      debugPrint('[RELEVANT_APPS] installedAppsStreamError=$error');
     });
   }
 

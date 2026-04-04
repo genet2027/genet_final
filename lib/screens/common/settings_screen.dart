@@ -1,3 +1,6 @@
+// DEPRECATED WRAPPER.
+// The authoritative implementation is `lib/screens/settings_screen.dart`.
+
 import 'dart:io';
 
 import 'package:flutter/material.dart';

@@ -1,3 +1,7 @@
+// DEPRECATED / NOT PART OF ACTIVE CHILD HOME PATH.
+// The authoritative implementation is `lib/screens/child_home_screen.dart`.
+// Keep this file out of active imports/routes to avoid fixes landing here by mistake.
+
 import 'dart:async';
 import 'dart:developer' as developer;
 
@@ -92,7 +96,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
     _firebaseSyncSub = watchSyncedChildDataStream(parentId, childId).listen((data) async {
       if (!mounted) return;
       final role = await getUserRole();
-      print('ROLE: $role');
+      debugPrint('[GenetBlockLegacy] role=$role');
       final status = data?.connectionStatus;
       final docParentId = data?.parentId;
       developer.log('CHILD_LISTENER: child doc updated', name: 'Sync');

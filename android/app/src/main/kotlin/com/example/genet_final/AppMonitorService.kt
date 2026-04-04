@@ -1,5 +1,9 @@
 package com.example.genet_final
 
+// DEPRECATED / NOT PART OF ACTIVE ENFORCEMENT PATH.
+// This service is intentionally not started and stops immediately.
+// Active enforcement currently relies on Accessibility + VPN flow instead.
+
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager

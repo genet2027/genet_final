@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -33,19 +32,39 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   bool? _isParentRole;
   bool _requireVpn = false;
   StreamSubscription<Map<String, dynamic>?>? _parentVpnDocSub;
+  StreamSubscription<String?>? _selectedChildIdSub;
+  String? _boundSelectedChildId;
   /// Last [vpnStatus] from child doc (on|off|error); parent device does not use local VPN for this.
   String? _parentRemoteVpnStatus;
+
+  Future<String?> _resolveSelectedChildId() async {
+    final selectedChildId = normalizeIdentifier(await getSelectedChildId());
+    debugPrint('[GenetDebug] SELECTED CHILD ID: ${selectedChildId ?? 'none'}');
+    return selectedChildId;
+  }
+
+  Future<void> _refreshParentSelectionBindingsIfNeeded() async {
+    if (_isParentRole != true) return;
+    final selectedChildId = await _resolveSelectedChildId();
+    if (!mounted || selectedChildId == _boundSelectedChildId) return;
+    _boundSelectedChildId = selectedChildId;
+    await _bindParentVpnStatusStream();
+    await _loadRequireVpn();
+  }
 
   Future<void> _bindParentVpnStatusStream() async {
     await _parentVpnDocSub?.cancel();
     _parentVpnDocSub = null;
     if (_isParentRole != true) return;
-    final pid = await getOrCreateParentId();
-    final cid = await getSelectedChildId();
-    if (cid == null || cid.isEmpty) {
+    final pid = normalizeIdentifier(await getOrCreateParentId());
+    final cid = await _resolveSelectedChildId();
+    _boundSelectedChildId = cid;
+    if (pid == null || cid == null) {
       if (mounted) setState(() => _parentRemoteVpnStatus = 'off');
       return;
     }
+    debugPrint('[GenetDebug] PARENT ID: $pid');
+    debugPrint('[GenetDebug] READ PATH: genet_parents/$pid/children/$cid');
     _parentVpnDocSub = watchParentChildDocStream(pid, cid).listen((data) {
       if (!mounted) return;
       final raw = data?['vpnStatus'] as String?;
@@ -87,6 +106,14 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       } else {
         _bindParentVpnStatusStream();
         _loadRequireVpn();
+        _selectedChildIdSub = watchSelectedChildId().listen((selectedChildId) {
+          if (!mounted || _isParentRole != true) return;
+          final normalized = normalizeIdentifier(selectedChildId);
+          if (normalized == _boundSelectedChildId) return;
+          _boundSelectedChildId = normalized;
+          unawaited(_bindParentVpnStatusStream());
+          unawaited(_loadRequireVpn());
+        });
       }
     });
   }
@@ -94,6 +121,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   @override
   void dispose() {
     _parentVpnDocSub?.cancel();
+    _selectedChildIdSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -106,8 +134,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
         if (_isParentRole != true) {
           _loadVpnRunning();
         } else {
-          _bindParentVpnStatusStream();
-          _loadRequireVpn();
+          _refreshParentSelectionBindingsIfNeeded();
         }
       });
     }
@@ -125,8 +152,8 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
 
   Future<void> _loadRequireVpn() async {
     if (_isParentRole != true) return;
-    final cid = await getSelectedChildId();
-    if (cid == null || cid.isEmpty) {
+    final cid = await _resolveSelectedChildId();
+    if (cid == null) {
       if (mounted) setState(() => _requireVpn = false);
       return;
     }
@@ -143,8 +170,8 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       debugPrint('[GenetVpn] blocked_packages_for_vpn source=linkedChild id=$linkedChildId count=${list.length} $list');
       return list;
     }
-    final selectedChildId = await getSelectedChildId();
-    if (selectedChildId != null && selectedChildId.isNotEmpty) {
+    final selectedChildId = await _resolveSelectedChildId();
+    if (selectedChildId != null) {
       final list = await getBlockedPackagesForChild(selectedChildId);
       debugPrint('[GenetVpn] blocked_packages_for_vpn source=selectedChild id=$selectedChildId count=${list.length} $list');
       return list;
@@ -156,6 +183,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
 
   Future<bool> _verifyParentPin(BuildContext context) async {
     final hasPin = await PinStorage.hasPin();
+    if (!context.mounted) return false;
     if (!hasPin) {
       return _verifyOrCreatePin(context, isCreate: true);
     }
@@ -185,11 +213,13 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
                     return;
                   }
                   final ok = await PinStorage.verifyPin(pin);
+                  if (!ctx.mounted) return;
                   if (!ok) {
                     ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('סיסמת הורה שגויה')));
                     return;
                   }
                   if (mounted) await GenetConfig.setPin(pin);
+                  if (!ctx.mounted) return;
                   Navigator.pop(ctx, true);
                 },
                 child: const Text('אישור'),
@@ -338,6 +368,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   Future<bool> _verifyOrCreatePin(BuildContext context, {required bool isCreate}) async {
     final pinController = TextEditingController();
     final confirmController = TextEditingController();
+    if (!context.mounted) return false;
     final result = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -386,14 +417,17 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
                     return;
                   }
                   await PinStorage.savePin(pin);
+                  if (!ctx.mounted) return;
                   if (mounted) GenetConfig.setPin(pin);
                 } else {
                   final ok = await PinStorage.verifyPin(pin);
+                  if (!ctx.mounted) return;
                   if (!ok) {
                     ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('קוד PIN שגוי')));
                     return;
                   }
                 }
+                if (!ctx.mounted) return;
                 Navigator.pop(ctx, true);
               },
               child: const Text('אישור'),

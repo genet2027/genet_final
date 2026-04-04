@@ -102,6 +102,11 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
         firstName: firstName,
         lastName: lastName,
       );
+      debugPrint('[RELEVANT_APPS] parentId=$parentId');
+      debugPrint('[RELEVANT_APPS] childId=$childId');
+      try {
+        await syncRelevantAppsToBackend(childId, trigger: 'child_linked');
+      } catch (_) {}
       await setChildLinkStatusLinked(childId);
       GenetConfig.syncToNative();
       if (!mounted) return;

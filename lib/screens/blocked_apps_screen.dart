@@ -7,6 +7,7 @@ import '../core/config/genet_config.dart';
 import '../core/user_role.dart';
 import '../core/extension_requests.dart';
 import '../models/child_entity.dart';
+import '../models/installed_app.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
@@ -26,7 +27,7 @@ class BlockedAppsScreen extends StatefulWidget {
 }
 
 class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
-  List<Map<String, dynamic>> _installedApps = [];
+  List<InstalledApp> _installedApps = [];
   final List<String> _blockedPackages = [];
   List<ExtensionRequest> _extensionRequests = [];
   List<ChildEntity> _children = [];
@@ -36,8 +37,11 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
   String? _parentId;
   Timer? _countdownTimer;
   StreamSubscription<Map<String, dynamic>?>? _childDocSub;
+  StreamSubscription<InstalledAppsInventory>? _installedAppsSub;
+  StreamSubscription<String?>? _selectedChildIdSub;
   /// Avoid cancel+resubscribe on refresh when parent|child unchanged (single listener).
   String? _listenerAttachKey;
+  String? _installedAppsAttachChildId;
   /// Decode app icons once — full ListView rebuild was re-decoding base64 every frame (visible flicker).
   final Map<String, Uint8List> _iconBytesCache = {};
   /// True while local toggle → Firestore write is in flight (ignore echo snapshot).
@@ -58,6 +62,24 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
   bool _suppressListBump = false;
   /// Skip redundant installed-apps work when refresh returns the same list.
   String _lastInstalledAppsFingerprint = '';
+  bool _refreshingSelectedChild = false;
+  int? _lastInstalledAppsSyncAt;
+  String _lastInstalledAppsSyncTrigger = '';
+  String _lastInstalledAppsHash = '';
+  int _lastInstalledAppsCount = 0;
+
+  void _logCriticalEvent(String scope, Map<String, Object?> fields) {
+    final payload = fields.entries
+        .map((entry) => '${entry.key}: ${entry.value ?? 'null'}')
+        .join(' | ');
+    debugPrint('[$scope] $payload');
+  }
+
+  bool _hasSingleSelectedChildTarget(String? selectedChildId) {
+    final selected = normalizeIdentifier(selectedChildId);
+    final attached = normalizeIdentifier(_installedAppsAttachChildId);
+    return attached == null || selected == null || attached == selected;
+  }
 
   void _bumpAllSections() {
     _sectionRequests.value++;
@@ -74,10 +96,26 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
     _sectionRequests.value++;
   }
 
+  String _formatSyncTime(int? ms) {
+    if (ms == null || ms <= 0) return 'טרם סונכרן';
+    final dt = DateTime.fromMillisecondsSinceEpoch(ms);
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    final dd = dt.day.toString().padLeft(2, '0');
+    final mon = dt.month.toString().padLeft(2, '0');
+    return '$dd/$mon $hh:$mm';
+  }
+
   @override
   void initState() {
     super.initState();
     _loadAll();
+    _selectedChildIdSub = watchSelectedChildId().listen((selectedChildId) {
+      if (!mounted) return;
+      final normalized = normalizeIdentifier(selectedChildId);
+      if (normalized == _selectedChildId) return;
+      unawaited(_refreshSelectedChildIfNeeded());
+    });
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       final sid = _selectedChildId;
@@ -92,9 +130,14 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
   }
 
   void _listenToChildDoc() {
-    final parentId = _parentId;
-    final childId = _selectedChildId;
-    if (parentId == null || childId == null) return;
+    final parentId = normalizeIdentifier(_parentId);
+    final childId = normalizeIdentifier(_selectedChildId);
+    if (parentId == null || childId == null) {
+      _childDocSub?.cancel();
+      _childDocSub = null;
+      _listenerAttachKey = null;
+      return;
+    }
     final attachKey = '$parentId|$childId';
     if (_childDocSub != null && _listenerAttachKey == attachKey) {
       debugPrint('[GenetBlocked] duplicate listener prevented');
@@ -103,8 +146,11 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
     _childDocSub?.cancel();
     _listenerAttachKey = attachKey;
     final path = 'genet_parents/$parentId/children/$childId';
-    debugPrint('[GenetBlocked] blocked apps listener attached path=$path');
-    debugPrint('[GenetExtReq] extension request listener attached path=$path childId used=$childId');
+    _logCriticalEvent('GenetDebug', {
+      'PARENT ID': parentId,
+      'SELECTED CHILD ID': childId,
+      'READ PATH': path,
+    });
     _childDocSub = watchParentChildDocStream(parentId, childId).listen((data) {
       if (!mounted || data == null) return;
       if (_isApplyingLocalBlockedWrite) {
@@ -175,7 +221,52 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
       if (requestsChanged) {
         _sectionRequests.value++;
       }
+      _logCriticalEvent('GenetProtect', {
+        'SELECTED CHILD ID': childId,
+        'BLOCKED APPS COUNT': _blockedPackages.length,
+      });
     });
+  }
+
+  Future<void> _refreshSelectedChildIfNeeded() async {
+    if (_refreshingSelectedChild) return;
+    _refreshingSelectedChild = true;
+    try {
+      final selectedChildId = normalizeIdentifier(await getSelectedChildId());
+      if (!mounted || selectedChildId == _selectedChildId) return;
+      if (!_hasSingleSelectedChildTarget(selectedChildId)) {
+        _logCriticalEvent('GenetDebug', {
+          'VALIDATION': 'multiple selected-child targets detected',
+          'SELECTED CHILD ID': selectedChildId,
+          'ATTACHED CHILD ID': _installedAppsAttachChildId,
+        });
+      }
+      _childDocSub?.cancel();
+      _childDocSub = null;
+      _listenerAttachKey = null;
+      _installedAppsSub?.cancel();
+      _installedAppsSub = null;
+      _installedAppsAttachChildId = null;
+      _selectedChildId = selectedChildId;
+      _lastChildDocUiFingerprint = '';
+      _lastInstalledAppsFingerprint = '';
+      _installedApps = [];
+      _lastInstalledAppsCount = 0;
+      _lastInstalledAppsHash = '';
+      _lastInstalledAppsSyncAt = null;
+      _lastInstalledAppsSyncTrigger = '';
+      _blockedPackages.clear();
+      _approvedUntil = {};
+      _loadingNotifier.value = selectedChildId != null && selectedChildId.isNotEmpty;
+      await _loadBlocked();
+      await _loadExtensionRequests();
+      await _loadApprovedUntil();
+      _listenToChildDoc();
+      await _loadInstalledApps();
+      if (mounted) _bumpAllSections();
+    } finally {
+      _refreshingSelectedChild = false;
+    }
   }
 
   String _extensionSnapFpFromRaw(dynamic raw) {
@@ -287,7 +378,10 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
     _sectionApps.dispose();
     _loadingNotifier.dispose();
     _childDocSub?.cancel();
+    _installedAppsSub?.cancel();
+    _selectedChildIdSub?.cancel();
     _listenerAttachKey = null;
+    _installedAppsAttachChildId = null;
     super.dispose();
   }
 
@@ -295,9 +389,13 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
     _suppressListBump = true;
     try {
       _cachedGenetPkg = await GenetConfig.getPackageName();
-      _selectedChildId = await getSelectedChildId();
-      _parentId = await getParentId();
+      _selectedChildId = normalizeIdentifier(await getSelectedChildId());
+      _parentId = normalizeIdentifier(await getParentId());
       _children = await getChildren();
+      _logCriticalEvent('GenetDebug', {
+        'PARENT ID': _parentId ?? 'none',
+        'SELECTED CHILD ID': _selectedChildId ?? 'none',
+      });
       await _loadBlocked();
       await _loadInstalledApps();
       await _loadExtensionRequests();
@@ -359,35 +457,73 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
   }
 
   Future<void> _loadInstalledApps() async {
-    final showLoading = _installedApps.isEmpty;
-    if (mounted && showLoading) _loadingNotifier.value = true;
-    final sid = _selectedChildId;
-    final raw = sid == null || sid.isEmpty
-        ? <Map<String, dynamic>>[]
-        : await getChildInstalledAppsFromFirebase(sid);
-    final list = raw
-        .map(
-          (e) => <String, dynamic>{
-            'package': e['packageName'],
-            'name': e['appName'],
-            'icon': '',
-          },
-        )
-        .toList();
-    if (!mounted) return;
-    final fp = list.map((e) => '${e['package']}|${e['name']}').join(',');
-    if (fp == _lastInstalledAppsFingerprint && list.length == _installedApps.length) {
-      debugPrint('[GenetBlocked] skipped identical list update (installed apps)');
+    final sid = normalizeIdentifier(_selectedChildId);
+    if (sid == null) {
+      _installedAppsSub?.cancel();
+      _installedAppsSub = null;
+      _installedAppsAttachChildId = null;
+      _installedApps = [];
+      _lastInstalledAppsFingerprint = '';
+      _lastInstalledAppsCount = 0;
+      _lastInstalledAppsHash = '';
+      _lastInstalledAppsSyncAt = null;
+      _lastInstalledAppsSyncTrigger = '';
       _loadingNotifier.value = false;
       return;
     }
-    _lastInstalledAppsFingerprint = fp;
-    final newPkgs = list.map((e) => e['package'] as String? ?? '').toSet();
-    for (final k in _iconBytesCache.keys.toList()) {
-      if (!newPkgs.contains(k)) _iconBytesCache.remove(k);
+    if (_installedAppsSub != null && _installedAppsAttachChildId == sid) {
+      return;
     }
-    _installedApps = list;
-    _loadingNotifier.value = false;
+    _loadingNotifier.value = true;
+    _installedAppsSub?.cancel();
+    _installedAppsAttachChildId = sid;
+    final path = childInstalledAppsPath(sid);
+    debugPrint('[RELEVANT_APPS] selectedChildId=$sid');
+    debugPrint('[RELEVANT_APPS] parentListenerPath=$path');
+    _installedAppsSub = listenToSelectedChildRelevantApps(sid).listen((inventory) {
+      if (!mounted) return;
+      final list = inventory.apps;
+      final fp = list.map((e) => e.fingerprintPart()).join(',');
+      _logCriticalEvent('RELEVANT_APPS', {
+        'parentListenerTriggered': true,
+        'SELECTED CHILD ID': sid,
+        'parentReadCount': inventory.appCount,
+        'parentReadSourcePath': path,
+        'parentReadSourceField': 'relevantApps',
+      });
+      if (installedAppsHaveDuplicates(list)) {
+        _logCriticalEvent('RELEVANT_APPS', {
+          'VALIDATION': 'duplicate installed apps received',
+          'SELECTED CHILD ID': sid,
+        });
+      }
+      if (fp == _lastInstalledAppsFingerprint &&
+          list.length == _installedApps.length &&
+          inventory.appsHash == _lastInstalledAppsHash &&
+          inventory.lastSyncAt == _lastInstalledAppsSyncAt &&
+          inventory.lastSyncTrigger == _lastInstalledAppsSyncTrigger) {
+        debugPrint('[GenetBlocked] skipped identical list update (installed apps)');
+        _loadingNotifier.value = false;
+        return;
+      }
+      _lastInstalledAppsFingerprint = fp;
+      _lastInstalledAppsCount = inventory.appCount;
+      _lastInstalledAppsHash = inventory.appsHash;
+      _lastInstalledAppsSyncAt = inventory.lastSyncAt;
+      _lastInstalledAppsSyncTrigger = inventory.lastSyncTrigger;
+      final newPkgs = list.map((e) => e.packageName).toSet();
+      for (final k in _iconBytesCache.keys.toList()) {
+        if (!newPkgs.contains(k)) _iconBytesCache.remove(k);
+      }
+      _installedApps = list;
+      _logCriticalEvent('RELEVANT_APPS', {
+        'SELECTED CHILD ID': sid,
+        'localStateReplaced': true,
+        'APPS SYNCED': list.length,
+      });
+      _loadingNotifier.value = false;
+      _maybeBumpApps();
+    });
   }
 
   Future<void> _saveBlocked() async {
@@ -521,7 +657,7 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
         debugPrint('[GenetBlocked] blocked apps screen rebuild (loading=$loading)');
         return Scaffold(
       appBar: AppBar(
-        title: const Text('אפליקציות חסומות'),
+        title: const Text('אפליקציות רלוונטיות במכשיר הילד'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -739,14 +875,51 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
                                       CrossAxisAlignment.stretch,
                                   children: [
                                     const SizedBox(height: 24),
+                                    Card(
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(16),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.stretch,
+                                          children: [
+                                            Text(
+                                              'סה״כ אפליקציות רלוונטיות: $_lastInstalledAppsCount',
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 6),
+                                            Text(
+                                              'סנכרון אחרון: ${_formatSyncTime(_lastInstalledAppsSyncAt)}',
+                                            ),
+                                            if (_lastInstalledAppsSyncTrigger.isNotEmpty) ...[
+                                              const SizedBox(height: 6),
+                                              Text(
+                                                'טריגר אחרון: $_lastInstalledAppsSyncTrigger',
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 12),
                                     Text(
-                                      'בחר את האפליקציות שתיחסמנה',
+                                      'בחר אפליקציות רלוונטיות לניהול',
                                       style: TextStyle(
                                         color: Colors.grey.shade600,
                                         fontSize: 14,
                                       ),
                                     ),
                                     const SizedBox(height: 16),
+                                    if (_installedApps.isEmpty)
+                                      Card(
+                                        child: const Padding(
+                                          padding: EdgeInsets.all(16),
+                                          child: Text(
+                                            'אין עדיין אפליקציות רלוונטיות לילד שנבחר.',
+                                          ),
+                                        ),
+                                      ),
                                   ],
                                 );
                               }
@@ -763,11 +936,9 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
                                 );
                               }
                               final app = _installedApps[index - 1];
-                              final packageName =
-                                  app['package'] as String? ?? '';
-                              final name =
-                                  app['name'] as String? ?? packageName;
-                              final iconBase64 = app['icon'] as String?;
+                              final packageName = app.packageName;
+                              final name = app.appName;
+                              const String? iconBase64 = null;
                               final blocked =
                                   _blockedPackages.contains(packageName);
                               final hasActiveExtension = blocked &&

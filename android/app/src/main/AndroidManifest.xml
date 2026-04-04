@@ -9,6 +9,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <application
         android:label="Genet"
@@ -118,6 +119,15 @@
         <intent>
             <action android:name="android.intent.action.MAIN"/>
             <category android:name="android.intent.category.LAUNCHER"/>
+        </intent>
+        <!-- Lets PackageManager resolve VIEW / launcher for other apps when QUERY_ALL_PACKAGES is not granted (Play). -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="http"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
         </intent>
     </queries>
 </manifest>

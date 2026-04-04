@@ -6,8 +6,8 @@ import '../../core/config/genet_config.dart';
 import '../../core/user_role.dart';
 import '../../repositories/parent_child_sync_repository.dart';
 import '../../theme/app_theme.dart';
-import '../common/settings_screen.dart';
-import 'parent_dashboard_tab.dart';
+import '../settings_screen.dart';
+import '../parent_dashboard_tab.dart';
 import '../required_permissions_screen.dart';
 
 /// Parent-only shell with BottomNavigationBar: Dashboard | Settings.

@@ -1,3 +1,6 @@
+// DEPRECATED / NOT PART OF ACTIVE PROTECTION UI PATH.
+// The full-screen network protection flow is currently disconnected.
+
 import 'package:flutter/material.dart';
 
 enum NetworkProtectionBlockReason { vpn, sleep, other }

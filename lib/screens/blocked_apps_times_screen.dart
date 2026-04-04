@@ -3,9 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../core/config/genet_config.dart';
 import '../core/extension_requests.dart';
 import '../core/user_role.dart';
+import '../models/installed_app.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
@@ -33,7 +33,7 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
   String _startTime = '20:00';
   String _endTime = '08:00';
   List<String> _blockedPackages = [];
-  List<Map<String, dynamic>> _installedApps = [];
+  List<InstalledApp> _installedApps = [];
   List<ExtensionRequest> _requests = [];
   Map<String, int> _approvedUntil = {};
   bool _loading = true;
@@ -92,8 +92,7 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
       }
       approvedUntil = await getExtensionApprovedUntil();
     }
-    List<Map<String, dynamic>> installed = [];
-    installed = await GenetConfig.getInstalledApps();
+    final installed = await scanInstalledApps();
     final requests = await getExtensionRequests();
     if (mounted) {
       setState(() {
@@ -112,10 +111,9 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
     }
   }
 
-  List<Map<String, dynamic>> get _blockedAppsWithNames {
+  List<InstalledApp> get _blockedAppsWithNames {
     return _installedApps.where((app) {
-      final pkg = app['package'] as String? ?? '';
-      return _blockedPackages.contains(pkg);
+      return _blockedPackages.contains(app.packageName);
     }).toList();
   }
 
@@ -280,8 +278,8 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
                     )
                   else
                     ..._blockedAppsWithNames.map((app) {
-                      final pkg = app['package'] as String? ?? '';
-                      final name = app['name'] as String? ?? pkg;
+                      final pkg = app.packageName;
+                      final name = app.appName;
                       final status = _requestStatusForPackage(pkg);
                       return Card(
                         margin: const EdgeInsets.only(bottom: 8),
