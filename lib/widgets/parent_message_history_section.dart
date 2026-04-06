@@ -330,7 +330,7 @@ class _ParentMessageHistorySectionState
                         alignment: Alignment.topRight,
                         children: [
                           ...previousChildren,
-                          if (currentChild != null) currentChild,
+                          ?currentChild,
                         ],
                       );
                     },

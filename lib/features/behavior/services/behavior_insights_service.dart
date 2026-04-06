@@ -1,5 +1,4 @@
 import '../enums/behavior_event_type.dart';
-import '../models/behavior_event.dart';
 import 'behavior_local_store.dart';
 
 class BehaviorInsightsSummary {
