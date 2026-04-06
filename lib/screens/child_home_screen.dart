@@ -19,7 +19,12 @@ import '../models/child_model.dart';
 import '../models/parent_message.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
+import '../models/installed_app.dart';
+import '../services/installed_apps_bridge.dart';
+import '../services/installed_apps_categorization.dart';
+import '../services/installed_apps_periodic_fallback.dart';
 import '../services/night_mode_service.dart';
+import '../services/relevant_installed_apps_engine.dart';
 import '../theme/app_theme.dart';
 import '../widgets/language_switcher.dart';
 import '../widgets/natural_text_field.dart';
@@ -29,7 +34,7 @@ import 'content_library_screen.dart';
 import 'role_select_screen.dart';
 import 'school_schedule_screen.dart';
 
-/// Maps local sync scheduling reasons to backend [syncRelevantAppsToBackend] trigger strings.
+/// Maps local sync scheduling reasons to backend [syncRelevantApps] trigger strings.
 String _mapInstalledAppsBackendTrigger(String reason) {
   return switch (reason) {
     'startup' => 'app_launch',
@@ -41,6 +46,8 @@ String _mapInstalledAppsBackendTrigger(String reason) {
     'failure_retry' => 'failure_retry',
     'active_verification' => 'active_verification',
     'identity_retry' => 'identity_retry',
+    'package_added' => 'package_added',
+    'package_removed' => 'package_removed',
     _ => reason,
   };
 }
@@ -104,6 +111,8 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
   StreamSubscription<SyncedChildData?>? _firebaseSyncSub;
   StreamSubscription<Map<String, dynamic>?>? _sleepLockSub;
   StreamSubscription<Map<String, dynamic>>? _installedAppsChangeSub;
+  StreamSubscription<dynamic>? _packageChangeFastPathSub;
+  StreamSubscription<List<InstalledApp>>? _relevantLocalListSub;
   StreamSubscription<dynamic>? _enforcementSub;
 
   /// Single source of truth from Firebase: true = connected, false = disconnected, null = loading
@@ -112,7 +121,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
 
   /// Timer: keep native prefs in sync when schedule windows cross.
   Timer? _nightCheckTimer;
-  Timer? _installedAppsVerificationTimer;
+  Timer? _installedAppsFallbackTimer;
 
   /// Re-apply VPN when extension windows start/end without waiting for the next Firestore write.
   Timer? _extensionVpnTimer;
@@ -123,7 +132,6 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
   bool _installedAppsSyncInFlight = false;
   bool _installedAppsSyncQueued = false;
   bool _installedAppsEmptyRetryUsed = false;
-  bool _installedAppsFailureRetryUsed = false;
   bool _installedAppsIdentityRetryUsed = false;
 
   /// Remote VPN policy snapshot (child device only).
@@ -220,12 +228,10 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
 
   void _startInstalledAppsSyncTriggers() {
     _scheduleInstalledAppsSync(reason: 'startup', delay: Duration.zero);
-    _installedAppsVerificationTimer = Timer.periodic(
-      const Duration(minutes: 2),
-      (_) => _scheduleInstalledAppsSync(
-        reason: 'active_verification',
-        delay: Duration.zero,
-      ),
+    _installedAppsFallbackTimer?.cancel();
+    _installedAppsFallbackTimer = Timer.periodic(
+      const Duration(minutes: 15),
+      (_) => unawaited(runFallbackInstalledAppsRefresh()),
     );
   }
 
@@ -505,6 +511,17 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
       final packageName = event['package'] as String? ?? '';
       _scheduleInstalledAppsSync(reason: '$action:$packageName');
     });
+    InstalledAppsBridge.ensurePackageChangeInboundHandler();
+    _packageChangeFastPathSub?.cancel();
+    _packageChangeFastPathSub = InstalledAppsBridge.packageChangeStream.listen((event) {
+      notifyInstalledAppsRealtimePackageEvent();
+      unawaited(RelevantInstalledAppsEngine.instance.handlePackageChangeEvent(event));
+    });
+    _relevantLocalListSub?.cancel();
+    _relevantLocalListSub =
+        RelevantInstalledAppsEngine.instance.relevantListStream.listen((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   void _scheduleInstalledAppsSync({
@@ -567,8 +584,16 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
       _logCriticalEvent('RELEVANT_APPS', {
         'syncRelevantAppsStarted': trigger,
       });
-      final syncedCount = await syncRelevantAppsToBackend(
-        childId,
+      final rawList = await InstalledAppsBridge.fetchInstalledAppsRaw();
+      final relevantApps = categorizeInstalledApps(rawList);
+      RelevantInstalledAppsEngine.instance.applyFullRelevantState(
+        relevantApps,
+        rawList.length,
+      );
+      final syncedCount = await syncRelevantApps(
+        childId: childId,
+        relevantApps: relevantApps,
+        rawInstalledAppCount: rawList.length,
         trigger: trigger,
       );
       _logCriticalEvent('RELEVANT_APPS', {
@@ -576,7 +601,6 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
         'classifiedRelevantCount': syncedCount,
       });
       _installedAppsIdentityRetryUsed = false;
-      _installedAppsFailureRetryUsed = false;
       if (syncedCount > 0) {
         _installedAppsEmptyRetryUsed = false;
       } else if (!_installedAppsEmptyRetryUsed) {
@@ -587,14 +611,8 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
           delay: const Duration(seconds: 2),
         );
       }
-    } catch (_) {
-      if (!_installedAppsFailureRetryUsed) {
-        _installedAppsFailureRetryUsed = true;
-        _scheduleInstalledAppsSync(
-          reason: 'failure_retry',
-          delay: const Duration(seconds: 5),
-        );
-      }
+    } catch (e, st) {
+      debugPrint('[RELEVANT_APPS] syncInstalledApps unexpected: $e $st');
     } finally {
       _installedAppsSyncInFlight = false;
       if (_installedAppsSyncQueued) {
@@ -913,7 +931,6 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
       _lastSyncedForVpn = null;
       _installedAppsSyncQueued = false;
       _installedAppsEmptyRetryUsed = false;
-      _installedAppsFailureRetryUsed = false;
       _installedAppsIdentityRetryUsed = false;
       _requireVpn = false;
       _sleepLockActive = false;
@@ -1102,7 +1119,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
 
   void _disposeChildHomeTimers() {
     _nightCheckTimer?.cancel();
-    _installedAppsVerificationTimer?.cancel();
+    _installedAppsFallbackTimer?.cancel();
     _extensionVpnTimer?.cancel();
     _installedAppsSyncDebounceTimer?.cancel();
     _vpnStatusMonitorTimer?.cancel();
@@ -1110,6 +1127,10 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
 
   void _disposeChildHomeStreamSubscriptions() {
     _installedAppsChangeSub?.cancel();
+    _packageChangeFastPathSub?.cancel();
+    _relevantLocalListSub?.cancel();
+    RelevantInstalledAppsEngine.instance.reset();
+    resetInstalledAppsFallbackGuards();
     _enforcementSub?.cancel();
     _sleepLockSub?.cancel();
     _firebaseSyncSub?.cancel();

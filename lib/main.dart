@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -12,6 +14,7 @@ import 'repositories/children_repository.dart';
 import 'providers/language_provider.dart';
 import 'screens/permission_recovery_screen.dart';
 import 'screens/role_select_screen.dart';
+import 'services/installed_apps_bridge.dart';
 import 'services/json_translations.dart';
 import 'services/night_mode_service.dart';
 import 'theme/app_theme.dart';
@@ -22,6 +25,10 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
   await JsonTranslations.ensureLoaded();
+  // Step 1 temporary: full installed-apps bridge dump (remove or gate when done verifying).
+  if (kDebugMode && Platform.isAndroid) {
+    unawaited(InstalledAppsBridge.debugPrintSample());
+  }
   await ensureDefaultChild();
   GenetConfig.syncToNative();
   final nightModeService = NightModeService();

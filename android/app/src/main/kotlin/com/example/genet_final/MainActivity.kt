@@ -6,20 +6,14 @@ import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.pm.ApplicationInfo
-import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.drawable.Drawable
+import android.net.Uri
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
-import android.net.Uri
 import android.net.VpnService
 import android.os.Build
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import android.provider.Settings
-import android.util.Base64
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -27,130 +21,6 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
-
-/**
- * Mirrors [lib/models/installed_app.dart] browser / WebView sets for inventory only.
- * Used to treat some OEM browsers as launchable when [PackageManager.getLaunchIntentForPackage] is null
- * but the package still resolves http(s) VIEW (user-facing browser).
- */
-private val WEBVIEW_ENGINE_PACKAGES = setOf(
-    "com.google.android.webview",
-    "com.android.webview",
-    "com.google.android.trichromelibrary",
-)
-
-private val KNOWN_BROWSER_EXACT_PACKAGES = setOf(
-    "com.android.chrome",
-    "com.android.browser",
-    "com.chrome.beta",
-    "com.chrome.dev",
-    "com.chrome.canary",
-    "com.google.android.apps.chrome",
-    "org.mozilla.firefox",
-    "org.mozilla.fennec",
-    "org.mozilla.firefox_beta",
-    "com.opera.browser",
-    "com.opera.mini.native",
-    "com.opera.gx",
-    "com.microsoft.emmx",
-    "com.sec.android.app.sbrowser",
-    "com.brave.browser",
-    "com.duckduckgo.mobile.android",
-    "org.torproject.torbrowser",
-    "com.vivaldi.browser",
-    "com.kiwibrowser.browser",
-    "com.yandex.browser",
-    "com.uc.browser.en",
-    "com.ucmobile.intl",
-    "com.ucmobile.lite",
-    "com.ucmobile.x86",
-    "com.qwant.mobilenext",
-    "com.ecosia.android",
-    "mark.via.gp",
-    "com.apus.browser",
-    "com.cake.browser",
-    "com.stoutner.privacybrowser.standard",
-    "org.bromite.bromite",
-    "pure.lite.browser",
-    "com.pure.browser.plus",
-    "com.huawei.browser",
-    "com.huawei.android.browser",
-    "com.mi.global.browser",
-    "com.heytap.browser",
-    "com.coloros.browser",
-    "com.oneplus.browser",
-    "com.vivo.browser",
-    "com.oplus.browser",
-)
-
-private val KNOWN_BROWSER_PACKAGE_PREFIXES = listOf(
-    "com.chrome.",
-    "org.mozilla.",
-    "com.opera.",
-    "com.microsoft.emmx",
-    "com.vivaldi.",
-    "com.brave.",
-    "com.duckduckgo.",
-    "com.kiwibrowser",
-    "com.yandex.browser",
-    "com.sec.android.app.sbrowser",
-    "com.huawei.browser",
-)
-
-private fun isKnownBrowserPackageForInventory(packageLower: String): Boolean {
-    if (WEBVIEW_ENGINE_PACKAGES.contains(packageLower)) return false
-    if (KNOWN_BROWSER_EXACT_PACKAGES.contains(packageLower)) return true
-    return KNOWN_BROWSER_PACKAGE_PREFIXES.any { packageLower.startsWith(it) }
-}
-
-private fun queryIntentActivitiesForInventory(pm: PackageManager, intent: Intent): Boolean {
-    val matchFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        PackageManager.MATCH_ALL
-    } else {
-        PackageManager.MATCH_DEFAULT_ONLY
-    }
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        pm.queryIntentActivities(
-            intent,
-            PackageManager.ResolveInfoFlags.of(matchFlags.toLong()),
-        ).isNotEmpty()
-    } else {
-        @Suppress("DEPRECATION")
-        pm.queryIntentActivities(intent, matchFlags).isNotEmpty()
-    }
-}
-
-/** Some browsers only register https handlers; try both. Requires matching <queries> on API 30+ without QUERY_ALL_PACKAGES. */
-private fun packageResolvesBrowsableHttp(pm: PackageManager, pkg: String): Boolean {
-    for (scheme in listOf("http", "https")) {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("$scheme://")).apply {
-            addCategory(Intent.CATEGORY_BROWSABLE)
-            setPackage(pkg)
-        }
-        if (queryIntentActivitiesForInventory(pm, intent)) return true
-    }
-    return false
-}
-
-/** When [getLaunchIntentForPackage] is null but the app still exposes a launcher activity to the system resolver. */
-private fun packageHasLauncherActivityQuery(pm: PackageManager, pkg: String): Boolean {
-    val intent = Intent(Intent.ACTION_MAIN).apply {
-        addCategory(Intent.CATEGORY_LAUNCHER)
-        setPackage(pkg)
-    }
-    return queryIntentActivitiesForInventory(pm, intent)
-}
-
-/** Launch intent when present; for known browsers only, http(s) VIEW then launcher query as narrow fallbacks. */
-private fun isUserLaunchableForInventory(pm: PackageManager, pkg: String): Boolean {
-    if (pm.getLaunchIntentForPackage(pkg) != null) return true
-    val p = pkg.lowercase()
-    if (!isKnownBrowserPackageForInventory(p)) return false
-    if (packageResolvesBrowsableHttp(pm, pkg)) return true
-    return packageHasLauncherActivityQuery(pm, pkg)
-}
-
 class MainActivity : FlutterActivity() {
 
     private val CHANNEL = "com.example.genet_final/config"
@@ -172,6 +42,7 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         EnforcementBridge.register(flutterEngine.dartExecutor.binaryMessenger)
+        InstalledAppsChannel.register(flutterEngine.dartExecutor.binaryMessenger, this)
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, INSTALLED_APPS_EVENTS_CHANNEL).setStreamHandler(
             object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
@@ -340,14 +211,6 @@ class MainActivity : FlutterActivity() {
                 "getMissingPermissions" -> result.success(PermissionChecker.getMissingPermissions(this))
                 "getInitialRoute" -> result.success(getInitialRoute())
                 "getPackageName" -> result.success(packageName)
-                "getInstalledApps" -> {
-                    try {
-                        result.success(getInstalledApps())
-                    } catch (e: Exception) {
-                        Log.e("MainActivity", "getInstalledApps", e)
-                        result.success(emptyList<Map<String, Any>>())
-                    }
-                }
                 "shouldShowPermissionRecovery" -> {
                     val show = pendingPermissionRecovery
                     pendingPermissionRecovery = false
@@ -410,12 +273,22 @@ class MainActivity : FlutterActivity() {
             override fun onReceive(context: android.content.Context?, intent: Intent?) {
                 val action = intent?.action ?: return
                 val pkg = intent.data?.schemeSpecificPart ?: return
-                events?.success(
-                    mapOf(
-                        "action" to action,
-                        "package" to pkg,
-                    )
-                )
+                when (action) {
+                    Intent.ACTION_PACKAGE_ADDED -> {
+                        InstalledAppsChannel.notifyPackageChanged(pkg, "added")
+                    }
+                    Intent.ACTION_PACKAGE_REMOVED -> {
+                        InstalledAppsChannel.notifyPackageChanged(pkg, "removed")
+                    }
+                    Intent.ACTION_PACKAGE_CHANGED -> {
+                        events?.success(
+                            mapOf(
+                                "action" to action,
+                                "package" to pkg,
+                            ),
+                        )
+                    }
+                }
             }
         }
         ContextCompat.registerReceiver(
@@ -558,96 +431,4 @@ class MainActivity : FlutterActivity() {
         return true
     }
 
-    private fun getInstalledApps(): List<Map<String, Any>> {
-        val pm = packageManager
-        val installedApps = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            pm.getInstalledApplications(android.content.pm.PackageManager.ApplicationInfoFlags.of(0))
-        } else {
-            @Suppress("DEPRECATION")
-            pm.getInstalledApplications(0)
-        }
-        val seen = mutableSetOf<String>()
-        return installedApps.mapNotNull { appInfo ->
-            val pkg = appInfo.packageName
-            if (!seen.add(pkg)) return@mapNotNull null
-            if (pkg.isBlank()) return@mapNotNull null
-            val packageInfo = try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    pm.getPackageInfo(pkg, android.content.pm.PackageManager.PackageInfoFlags.of(0))
-                } else {
-                    @Suppress("DEPRECATION")
-                    pm.getPackageInfo(pkg, 0)
-                }
-            } catch (_: Exception) {
-                null
-            }
-            val installerPackage = try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    pm.getInstallSourceInfo(pkg).installingPackageName ?: ""
-                } else {
-                    @Suppress("DEPRECATION")
-                    pm.getInstallerPackageName(pkg) ?: ""
-                }
-            } catch (_: Exception) {
-                ""
-            }
-            val isLaunchable = isUserLaunchableForInventory(pm, pkg)
-            val category = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                when (appInfo.category) {
-                    ApplicationInfo.CATEGORY_GAME -> "game"
-                    ApplicationInfo.CATEGORY_SOCIAL -> "social"
-                    ApplicationInfo.CATEGORY_AUDIO -> "audio"
-                    ApplicationInfo.CATEGORY_VIDEO -> "video"
-                    ApplicationInfo.CATEGORY_IMAGE -> "image"
-                    ApplicationInfo.CATEGORY_MAPS -> "maps"
-                    ApplicationInfo.CATEGORY_PRODUCTIVITY -> "productivity"
-                    else -> ""
-                }
-            } else {
-                ""
-            }
-            val name = pm.getApplicationLabel(appInfo).toString().ifBlank { pkg }
-            val icon = drawableToBase64(pm.getApplicationIcon(appInfo))
-            mapOf(
-                "name" to name,
-                "package" to pkg,
-                "icon" to (icon ?: ""),
-                "isSystemApp" to (
-                    (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0 ||
-                        (appInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
-                ),
-                "isLaunchable" to isLaunchable,
-                "category" to category,
-                "versionName" to (packageInfo?.versionName ?: ""),
-                "versionCode" to (
-                    if (packageInfo == null) 0L
-                    else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) packageInfo.longVersionCode
-                    else {
-                        @Suppress("DEPRECATION")
-                        packageInfo.versionCode.toLong()
-                    }
-                ),
-                "installerPackage" to installerPackage,
-                "installedTime" to (packageInfo?.firstInstallTime ?: 0L),
-                "updatedTime" to (packageInfo?.lastUpdateTime ?: 0L),
-                "lastSeenAt" to System.currentTimeMillis()
-            ) as Map<String, Any>
-        }.sortedWith(
-            compareBy<Map<String, Any>>(
-                { (it["name"] as? String).orEmpty().lowercase() },
-                { (it["package"] as? String).orEmpty() }
-            )
-        )
-    }
-
-    private fun drawableToBase64(drawable: Drawable?): String? {
-        if (drawable == null) return null
-        val bitmap = Bitmap.createBitmap(drawable.intrinsicWidth.coerceAtLeast(1), drawable.intrinsicHeight.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        drawable.setBounds(0, 0, canvas.width, canvas.height)
-        drawable.draw(canvas)
-        val stream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.PNG, 90, stream)
-        return Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
-    }
 }

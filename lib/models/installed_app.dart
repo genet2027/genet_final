@@ -5,6 +5,7 @@ class InstalledApp {
     required this.isSystemApp,
     required this.isLaunchable,
     required this.category,
+    this.isUnknownCategory = false,
     required this.versionName,
     required this.versionCode,
     required this.installerPackage,
@@ -18,6 +19,8 @@ class InstalledApp {
   final bool isSystemApp;
   final bool isLaunchable;
   final String category;
+  /// True when store category could not be mapped to a known label ([normalizeInstalledAppCategory] → `unknown`).
+  final bool isUnknownCategory;
   final String versionName;
   final int versionCode;
   final String installerPackage;
@@ -325,6 +328,7 @@ class InstalledApp {
       isSystemApp: map['isSystemApp'] == true,
       isLaunchable: map['isLaunchable'] != false,
       category: (map['category'] as String? ?? '').trim().toLowerCase(),
+      isUnknownCategory: map['isUnknownCategory'] == true,
       versionName: (map['versionName'] as String? ?? '').trim(),
       versionCode: (map['versionCode'] as num?)?.toInt() ?? 0,
       installerPackage: (map['installerPackage'] as String? ?? '').trim(),
@@ -346,6 +350,7 @@ class InstalledApp {
       isSystemApp: map['isSystemApp'] == true,
       isLaunchable: map['isLaunchable'] != false,
       category: (map['category'] as String? ?? '').trim().toLowerCase(),
+      isUnknownCategory: map['isUnknownCategory'] == true,
       versionName: (map['versionName'] as String? ?? '').trim(),
       versionCode: (map['versionCode'] as num?)?.toInt() ?? 0,
       installerPackage: (map['installerPackage'] as String? ?? '').trim(),
@@ -364,6 +369,7 @@ class InstalledApp {
       'isSystemApp': isSystemApp,
       'isLaunchable': isLaunchable,
       'category': category,
+      'isUnknownCategory': isUnknownCategory,
       'versionName': versionName,
       'versionCode': versionCode,
       'installerPackage': installerPackage,
@@ -374,7 +380,7 @@ class InstalledApp {
   }
 
   String fingerprintPart() =>
-      '$packageName|$appName|$isSystemApp|$isLaunchable|$category|$versionName|$versionCode|$installerPackage|${installedTime ?? 0}|${updatedTime ?? 0}';
+      '$packageName|$appName|$isSystemApp|$isLaunchable|$category|$isUnknownCategory|$versionName|$versionCode|$installerPackage|${installedTime ?? 0}|${updatedTime ?? 0}';
 
   bool get installedFromStore {
     return _storeInstallerPackages.contains(installerPackage.toLowerCase());
@@ -418,6 +424,7 @@ class InstalledApp {
     bool? isSystemApp,
     bool? isLaunchable,
     String? category,
+    bool? isUnknownCategory,
     String? versionName,
     int? versionCode,
     String? installerPackage,
@@ -431,6 +438,7 @@ class InstalledApp {
       isSystemApp: isSystemApp ?? this.isSystemApp,
       isLaunchable: isLaunchable ?? this.isLaunchable,
       category: category ?? this.category,
+      isUnknownCategory: isUnknownCategory ?? this.isUnknownCategory,
       versionName: versionName ?? this.versionName,
       versionCode: versionCode ?? this.versionCode,
       installerPackage: installerPackage ?? this.installerPackage,

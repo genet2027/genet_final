@@ -10,6 +10,7 @@ import '../core/extension_requests.dart';
 import '../models/child_entity.dart';
 import '../models/installed_app.dart';
 import '../models/parent_message.dart';
+import '../services/installed_apps_categorization.dart';
 import 'children_repository.dart';
 
 /// Parent ↔ child Firestore sync and local identity helpers.
@@ -110,6 +111,7 @@ const String _kRelevantAppsHash = 'relevantAppsHash';
 const String _kRelevantAppsLastSyncAt = 'lastSyncAt';
 const String _kRelevantAppsLastSyncTrigger = 'lastSyncTrigger';
 const String _kInstalledAppsFingerprintPrefix = 'genet_installed_apps_fp_';
+const String _kLocalRawInstalledCountPrefix = 'genet_child_raw_installed_count_v1_';
 
 DocumentReference<Map<String, dynamic>> _childInstalledAppsDocRef(String childId) {
   return FirebaseFirestore.instance.doc('child_apps/$childId');
@@ -216,14 +218,6 @@ List<String> _sortedInstalledPackages(List<InstalledApp> apps) {
   return list;
 }
 
-bool _sameSortedPackageNameLists(List<String> a, List<String> b) {
-  if (a.length != b.length) return false;
-  for (var i = 0; i < a.length; i++) {
-    if (a[i] != b[i]) return false;
-  }
-  return true;
-}
-
 // =============================================================================
 // === Installed apps: device scan, classification, backend sync, parent read ===
 // =============================================================================
@@ -231,12 +225,26 @@ Future<List<InstalledApp>> scanInstalledApps() async {
   return InstalledApp.fromNativeList(await GenetConfig.getInstalledApps());
 }
 
-List<InstalledApp> classifyAppsForParentalControl(List<InstalledApp> rawApps) {
-  return InstalledApp.classifyAppsForParentalControl(rawApps);
+/// Step 4 — stable signature for sync skip / parent visible dedupe: package, normalized category, unknown flag.
+String relevantInventorySyncFingerprint(List<InstalledApp> apps) {
+  if (apps.isEmpty) return '';
+  final sorted = List<InstalledApp>.from(apps)
+    ..sort((a, b) => a.packageName.compareTo(b.packageName));
+  return sorted
+      .map(
+        (e) =>
+            '${e.packageName}|${normalizeInstalledAppCategory(e.category)}|${e.isUnknownCategory}',
+      )
+      .join(',');
 }
 
-Future<int> syncRelevantAppsToBackend(
-  String childId, {
+/// Single child → backend write for relevant installed apps (full replace). Callers supply filtered list + raw count.
+///
+/// Does not scan, categorize, or read native lists. [relevantApps] must already be Step‑2 filtered.
+Future<int> syncRelevantApps({
+  required String childId,
+  required List<InstalledApp> relevantApps,
+  required int rawInstalledAppCount,
   String trigger = 'unknown',
 }) async {
   final normalizedChildId = normalizeIdentifier(childId);
@@ -246,68 +254,35 @@ Future<int> syncRelevantAppsToBackend(
   }
   debugPrint('[RELEVANT_APPS] CHILD ID: $normalizedChildId');
   debugPrint('[RELEVANT_APPS] triggerReason=$trigger');
-  debugPrint('[RELEVANT_APPS] syncRelevantAppsStarted=true');
-  debugPrint('[RELEVANT_APPS] APPS SCAN: start');
-  final rawApps = await scanInstalledApps();
-  debugPrint('[RELEVANT_APPS] installedScanCompleted=${rawApps.length}');
-  final afterSystemExclusion = rawApps
-      .where((app) => !app.excludedBySystemMetadata)
-      .toList();
-  debugPrint('[RELEVANT_APPS] totalScannedApps=${rawApps.length}');
-  debugPrint(
-    '[RELEVANT_APPS] totalAfterHardExclusion=${afterSystemExclusion.length}',
-  );
+  debugPrint('[RELEVANT_APPS] syncRelevantApps started (single entry)');
   final prefs = await SharedPreferences.getInstance();
-  final relevantApps = classifyAppsForParentalControl(rawApps);
-  final keptPackages = relevantApps.map((app) => app.packageName).toSet();
-  final removedApps = rawApps
-      .where((app) => !keptPackages.contains(app.packageName))
-      .toList();
-  debugPrint('[RELEVANT_APPS] classifiedRelevantCount=${relevantApps.length}');
-  debugPrint('[RELEVANT_APPS] totalAfterRelevanceFilter=${relevantApps.length}');
-  debugPrint('[RELEVANT_APPS] keptPackages=${_packagesDebugSummary(relevantApps)}');
-  debugPrint(
-    '[RELEVANT_APPS] removedPackagesCount=${removedApps.length}',
-  );
+  final rawCountKey = '$_kLocalRawInstalledCountPrefix$normalizedChildId';
+  final fingerprintKey = '$_kInstalledAppsFingerprintPrefix$normalizedChildId';
+
   if (installedAppsHaveDuplicates(relevantApps)) {
     debugPrint('[RELEVANT_APPS] VALIDATION: duplicate relevant apps detected before write');
   }
-  for (final app in rawApps) {
-    if (!app.shouldAuditClassification) continue;
-    debugPrint(
-      '[RELEVANT_APPS] package=${app.packageName} classified=${app.isRelevantForParent() ? "relevant" : "excluded"}',
-    );
-  }
-  final fingerprint = relevantApps.map((e) => e.fingerprintPart()).join(',');
-  final fingerprintKey = '$_kInstalledAppsFingerprintPrefix$normalizedChildId';
+  final fingerprint = relevantInventorySyncFingerprint(relevantApps);
   final lastFingerprint = prefs.getString(fingerprintKey) ?? '';
-  debugPrint('[RELEVANT_APPS] CURRENT HASH: $fingerprint');
-  debugPrint('[RELEVANT_APPS] PREVIOUS HASH: $lastFingerprint');
+  final lastRawSynced = prefs.getInt(rawCountKey);
+  debugPrint('[RELEVANT_APPS] CURRENT SYNC FP: $fingerprint');
+  debugPrint('[RELEVANT_APPS] LAST SYNCED FP: $lastFingerprint');
+  debugPrint('[RELEVANT_APPS] rawCount=$rawInstalledAppCount lastRawSynced=$lastRawSynced');
   final parentId = await getLinkedParentId();
   final normalizedParentId = normalizeIdentifier(parentId);
   if (normalizedParentId != null) {
     debugPrint('[RELEVANT_APPS] PARENT ID: $normalizedParentId');
   }
-  if (fingerprint == lastFingerprint) {
-    final backendInventory = await getChildRelevantAppsInventoryFromFirebase(
-      normalizedChildId,
-    );
-    final localPackages = _sortedInstalledPackages(relevantApps);
-    final backendPackages = _sortedInstalledPackages(backendInventory.apps);
-    if (backendInventory.appsHash == fingerprint &&
-        _sameSortedPackageNameLists(localPackages, backendPackages)) {
-      debugPrint('[RELEVANT_APPS] syncSkippedReason=unchanged');
-      debugPrint('[RELEVANT_APPS] writeSkippedUnchanged=true');
-      return relevantApps.length;
-    }
+  if (fingerprint == lastFingerprint && lastRawSynced == rawInstalledAppCount) {
+    debugPrint('[RELEVANT_APPS] syncSkippedReason=unchanged_fingerprint_and_raw_count');
+    debugPrint('[RELEVANT_APPS] writeSkippedUnchanged=true');
+    return relevantApps.length;
   }
   final targetPath = _childInstalledAppsDocRef(normalizedChildId).path;
-  debugPrint('[RELEVANT_APPS] WRITE PATH: $targetPath');
   debugPrint('[RELEVANT_APPS] filteredAppsCount=${relevantApps.length}');
   debugPrint('[RELEVANT_APPS] filteredPackageNames=${_packagesDebugSummary(relevantApps)}');
   debugPrint('[RELEVANT_APPS] backendWriteMode=REPLACE');
   debugPrint('[RELEVANT_APPS] backendTargetPath=$targetPath');
-  debugPrint('[RELEVANT_APPS] backendTargetField=$_kRelevantApps');
   if (!isValidChildAppsPath(normalizedChildId, targetPath)) {
     debugPrint('[RELEVANT_APPS] VALIDATION: invalid child apps write path');
     return 0;
@@ -317,18 +292,19 @@ Future<int> syncRelevantAppsToBackend(
     await _childInstalledAppsDocRef(normalizedChildId).set({
       _kRelevantApps: relevantApps.map((e) => e.toBackendMap()).toList(),
       _kRelevantAppsCount: relevantApps.length,
-      _kRawInstalledAppsCount: rawApps.length,
+      _kRawInstalledAppsCount: rawInstalledAppCount,
       _kRelevantAppsHash: fingerprint,
       _kRelevantAppsLastSyncAt: now,
       _kRelevantAppsLastSyncTrigger: trigger,
       _kUpdatedAt: FieldValue.serverTimestamp(),
     });
     await prefs.setString(fingerprintKey, fingerprint);
+    await prefs.setInt(rawCountKey, rawInstalledAppCount);
     debugPrint('[RELEVANT_APPS] syncRelevantAppsFinished=${relevantApps.length}');
     debugPrint('[RELEVANT_APPS] backendWriteSuccess=true');
-  } catch (error) {
-    debugPrint('[RELEVANT_APPS] backendWriteFailure=$error');
-    rethrow;
+  } catch (error, st) {
+    debugPrint('[RELEVANT_APPS] backendWriteFailure=$error $st');
+    return 0;
   }
   return relevantApps.length;
 }

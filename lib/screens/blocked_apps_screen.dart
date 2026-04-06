@@ -10,6 +10,7 @@ import '../models/child_entity.dart';
 import '../models/installed_app.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
+import '../services/parent_installed_app_exclusions.dart';
 import '../theme/app_theme.dart';
 
 String _formatRemainingParent(int totalSeconds) {
@@ -65,7 +66,6 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
   bool _refreshingSelectedChild = false;
   int? _lastInstalledAppsSyncAt;
   String _lastInstalledAppsSyncTrigger = '';
-  String _lastInstalledAppsHash = '';
   int _lastInstalledAppsCount = 0;
 
   void _logCriticalEvent(String scope, Map<String, Object?> fields) {
@@ -252,7 +252,6 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
       _lastInstalledAppsFingerprint = '';
       _installedApps = [];
       _lastInstalledAppsCount = 0;
-      _lastInstalledAppsHash = '';
       _lastInstalledAppsSyncAt = null;
       _lastInstalledAppsSyncTrigger = '';
       _blockedPackages.clear();
@@ -465,7 +464,6 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
       _installedApps = [];
       _lastInstalledAppsFingerprint = '';
       _lastInstalledAppsCount = 0;
-      _lastInstalledAppsHash = '';
       _lastInstalledAppsSyncAt = null;
       _lastInstalledAppsSyncTrigger = '';
       _loadingNotifier.value = false;
@@ -481,49 +479,66 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
     debugPrint('[RELEVANT_APPS] selectedChildId=$sid');
     debugPrint('[RELEVANT_APPS] parentListenerPath=$path');
     _installedAppsSub = listenToSelectedChildRelevantApps(sid).listen((inventory) {
-      if (!mounted) return;
-      final list = inventory.apps;
-      final fp = list.map((e) => e.fingerprintPart()).join(',');
-      _logCriticalEvent('RELEVANT_APPS', {
-        'parentListenerTriggered': true,
-        'SELECTED CHILD ID': sid,
-        'parentReadCount': inventory.appCount,
-        'parentReadSourcePath': path,
-        'parentReadSourceField': 'relevantApps',
-      });
-      if (installedAppsHaveDuplicates(list)) {
-        _logCriticalEvent('RELEVANT_APPS', {
-          'VALIDATION': 'duplicate installed apps received',
-          'SELECTED CHILD ID': sid,
-        });
-      }
-      if (fp == _lastInstalledAppsFingerprint &&
-          list.length == _installedApps.length &&
-          inventory.appsHash == _lastInstalledAppsHash &&
-          inventory.lastSyncAt == _lastInstalledAppsSyncAt &&
-          inventory.lastSyncTrigger == _lastInstalledAppsSyncTrigger) {
-        debugPrint('[GenetBlocked] skipped identical list update (installed apps)');
-        _loadingNotifier.value = false;
-        return;
-      }
-      _lastInstalledAppsFingerprint = fp;
-      _lastInstalledAppsCount = inventory.appCount;
-      _lastInstalledAppsHash = inventory.appsHash;
-      _lastInstalledAppsSyncAt = inventory.lastSyncAt;
-      _lastInstalledAppsSyncTrigger = inventory.lastSyncTrigger;
-      final newPkgs = list.map((e) => e.packageName).toSet();
-      for (final k in _iconBytesCache.keys.toList()) {
-        if (!newPkgs.contains(k)) _iconBytesCache.remove(k);
-      }
-      _installedApps = list;
-      _logCriticalEvent('RELEVANT_APPS', {
-        'SELECTED CHILD ID': sid,
-        'localStateReplaced': true,
-        'APPS SYNCED': list.length,
-      });
-      _loadingNotifier.value = false;
-      _maybeBumpApps();
+      unawaited(_applyParentInstalledInventory(sid, path, inventory));
     });
+  }
+
+  Future<void> _applyParentInstalledInventory(
+    String sid,
+    String path,
+    InstalledAppsInventory inventory,
+  ) async {
+    if (!mounted) return;
+    final list = inventory.apps;
+    final visible = await ParentInstalledAppExclusions.filterExcluded(sid, list);
+    final fp = relevantInventorySyncFingerprint(visible);
+    _logCriticalEvent('RELEVANT_APPS', {
+      'parentListenerTriggered': true,
+      'SELECTED CHILD ID': sid,
+      'parentReadCount': visible.length,
+      'parentReadSourcePath': path,
+      'parentReadSourceField': 'relevantApps',
+    });
+    if (installedAppsHaveDuplicates(visible)) {
+      _logCriticalEvent('RELEVANT_APPS', {
+        'VALIDATION': 'duplicate installed apps received',
+        'SELECTED CHILD ID': sid,
+      });
+    }
+    if (fp == _lastInstalledAppsFingerprint) {
+      debugPrint('[GenetBlocked] skipped identical visible list (installed apps)');
+      _loadingNotifier.value = false;
+      return;
+    }
+    _lastInstalledAppsFingerprint = fp;
+    _lastInstalledAppsCount = visible.length;
+    _lastInstalledAppsSyncAt = inventory.lastSyncAt;
+    _lastInstalledAppsSyncTrigger = inventory.lastSyncTrigger;
+    final newPkgs = visible.map((e) => e.packageName).toSet();
+    for (final k in _iconBytesCache.keys.toList()) {
+      if (!newPkgs.contains(k)) _iconBytesCache.remove(k);
+    }
+    _installedApps = visible;
+    _logCriticalEvent('RELEVANT_APPS', {
+      'SELECTED CHILD ID': sid,
+      'localStateReplaced': true,
+      'APPS SYNCED': visible.length,
+    });
+    _loadingNotifier.value = false;
+    _maybeBumpApps();
+  }
+
+  Future<void> _excludeFromRelevantList(String packageName) async {
+    final sid = _selectedChildId;
+    await ParentInstalledAppExclusions.addToExcluded(sid, packageName);
+    if (!mounted) return;
+    setState(() {
+      _installedApps =
+          _installedApps.where((a) => a.packageName != packageName).toList();
+      _lastInstalledAppsCount = _installedApps.length;
+      _lastInstalledAppsFingerprint = relevantInventorySyncFingerprint(_installedApps);
+    });
+    _maybeBumpApps();
   }
 
   Future<void> _saveBlocked() async {
@@ -947,11 +962,15 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
                                 key: ValueKey<String>('blocked_app_$packageName'),
                                 packageName: packageName,
                                 label: name,
+                                isUnknownCategory: app.isUnknownCategory,
                                 iconBase64: iconBase64,
                                 blocked: blocked,
                                 hasActiveExtension: hasActiveExtension,
                                 onToggle: () => _toggleBlock(packageName),
                                 onCancel: () => _cancelExtension(packageName),
+                                // Every visible row: manual hide (X) is never gated on category.
+                                onRemoveFromList: () =>
+                                    unawaited(_excludeFromRelevantList(packageName)),
                                 timerTick: _timerTick,
                                 remainingSeconds: () =>
                                     _remainingSeconds(packageName),
@@ -994,16 +1013,20 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
 }
 
 /// One row — [ListView.builder] + [ValueKey] keeps rebuilds off the extension header sliver.
+///
+/// The hide (X) control is always shown for every visible app; [isUnknownCategory] only affects labeling.
 class _InstalledAppTile extends StatefulWidget {
   const _InstalledAppTile({
     super.key,
     required this.packageName,
     required this.label,
+    required this.isUnknownCategory,
     required this.iconBase64,
     required this.blocked,
     required this.hasActiveExtension,
     required this.onToggle,
     required this.onCancel,
+    required this.onRemoveFromList,
     required this.timerTick,
     required this.remainingSeconds,
     required this.buildIcon,
@@ -1011,11 +1034,15 @@ class _InstalledAppTile extends StatefulWidget {
 
   final String packageName;
   final String label;
+  /// From child [categorizeInstalledApps] possiblyRelevant path; UI hint only — does not gate X.
+  final bool isUnknownCategory;
   final String? iconBase64;
   final bool blocked;
   final bool hasActiveExtension;
   final VoidCallback onToggle;
   final VoidCallback onCancel;
+  /// Hide this app from the parent relevant list (persisted per child).
+  final VoidCallback onRemoveFromList;
   final ValueNotifier<int> timerTick;
   final int? Function() remainingSeconds;
   final Widget? Function(String packageName, String? base64) buildIcon;
@@ -1035,8 +1062,30 @@ class _InstalledAppTileState extends State<_InstalledAppTile> {
         mainAxisSize: MainAxisSize.min,
         children: [
           SwitchListTile(
-            secondary: widget.buildIcon(widget.packageName, widget.iconBase64),
+            secondary: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.close, size: 22),
+                  tooltip: 'הסר מהרשימה',
+                  onPressed: widget.onRemoveFromList,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                ),
+                widget.buildIcon(widget.packageName, widget.iconBase64) ??
+                    const SizedBox(width: 40, height: 40),
+              ],
+            ),
             title: Text(widget.label),
+            subtitle: widget.isUnknownCategory
+                ? Text(
+                    'לא מסווג (קטגוריה)',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade600,
+                    ),
+                  )
+                : null,
             value: widget.blocked,
             onChanged: (v) {
               if (v == widget.blocked) return;

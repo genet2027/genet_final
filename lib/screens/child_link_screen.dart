@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +11,9 @@ import '../repositories/child_link_status_repository.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../repositories/pending_link_repository.dart';
+import '../services/installed_apps_bridge.dart';
+import '../services/installed_apps_categorization.dart';
+import '../services/relevant_installed_apps_engine.dart';
 import 'child_home_screen.dart';
 
 /// Child device: link to parent by scanning QR (payload = 4-digit code) or entering 4-digit manual code.
@@ -104,9 +108,20 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
       );
       debugPrint('[RELEVANT_APPS] parentId=$parentId');
       debugPrint('[RELEVANT_APPS] childId=$childId');
-      try {
-        await syncRelevantAppsToBackend(childId, trigger: 'child_linked');
-      } catch (_) {}
+      if (Platform.isAndroid) {
+        final rawList = await InstalledAppsBridge.fetchInstalledAppsRaw();
+        final relevantApps = categorizeInstalledApps(rawList);
+        RelevantInstalledAppsEngine.instance.applyFullRelevantState(
+          relevantApps,
+          rawList.length,
+        );
+        await syncRelevantApps(
+          childId: childId,
+          relevantApps: relevantApps,
+          rawInstalledAppCount: rawList.length,
+          trigger: 'child_linked',
+        );
+      }
       await setChildLinkStatusLinked(childId);
       GenetConfig.syncToNative();
       if (!mounted) return;

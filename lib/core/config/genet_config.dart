@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../repositories/children_repository.dart';
+import '../../services/installed_apps_bridge.dart';
 import '../user_role.dart';
 import '../vpn_remote_child.dart';
 
@@ -152,14 +153,7 @@ class GenetConfig {
   }
 
   static Future<List<Map<String, dynamic>>> getInstalledApps() async {
-    if (!Platform.isAndroid) return [];
-    try {
-      final raw = await _channel.invokeMethod<List<dynamic>>('getInstalledApps');
-      if (raw == null) return [];
-      return raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-    } on PlatformException catch (_) {
-      return [];
-    }
+    return InstalledAppsBridge.fetchLegacyMapsForInstalledApp();
   }
 
   static Stream<Map<String, dynamic>> watchInstalledAppsChanges() {
