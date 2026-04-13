@@ -63,24 +63,24 @@ void main() {
       );
     });
 
-    test('unknown / empty / unrecognized with human app name -> possiblyRelevant', () {
+    test('unknown / empty / unrecognized with human app name -> notRelevant', () {
       expect(
         decideInstalledAppRelevance(
           _raw(packageName: 'a', appName: 'Photo Fun', category: 'unknown'),
         ),
-        InstalledAppRelevanceDecision.possiblyRelevant,
+        InstalledAppRelevanceDecision.notRelevant,
       );
       expect(
         decideInstalledAppRelevance(
           _raw(packageName: 'b', appName: 'My Calendar', category: ''),
         ),
-        InstalledAppRelevanceDecision.possiblyRelevant,
+        InstalledAppRelevanceDecision.notRelevant,
       );
       expect(
         decideInstalledAppRelevance(
           _raw(packageName: 'c', appName: 'Notes Plus', category: 'bogus'),
         ),
-        InstalledAppRelevanceDecision.possiblyRelevant,
+        InstalledAppRelevanceDecision.notRelevant,
       );
     });
 
@@ -119,7 +119,7 @@ void main() {
       );
     });
 
-    test('clearlyRelevant not filtered by noise name', () {
+    test('noise display name excludes before approved category', () {
       expect(
         decideInstalledAppRelevance(
           _raw(
@@ -128,7 +128,7 @@ void main() {
             category: 'social',
           ),
         ),
-        InstalledAppRelevanceDecision.clearlyRelevant,
+        InstalledAppRelevanceDecision.notRelevant,
       );
     });
 
@@ -149,10 +149,274 @@ void main() {
         InstalledAppRelevanceDecision.notRelevant,
       );
     });
+
+    test('Chrome relevant when flagged system (browser before system_app)', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.android.chrome',
+            appName: 'Chrome',
+            category: 'unknown',
+            isSystemApp: true,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('Samsung Internet relevant when flagged system', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.sec.android.app.sbrowser',
+            appName: 'Internet',
+            category: 'unknown',
+            isSystemApp: true,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('Android System WebView not relevant', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.google.android.webview',
+            appName: 'Android System WebView',
+            category: 'unknown',
+          ),
+        ),
+        InstalledAppRelevanceDecision.notRelevant,
+      );
+    });
+
+    test('trichrome substring package excluded as engine/helper', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.google.android.trichrome.webview',
+            appName: 'Trichrome WebView',
+            category: 'unknown',
+          ),
+        ),
+        InstalledAppRelevanceDecision.notRelevant,
+      );
+    });
+
+    test('display name Pure Browser included when category unknown', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.example.vendor.app',
+            appName: 'Pure Browser',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('Instagram included when category wrong and flagged system (social before system_app)', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.instagram.android',
+            appName: 'Instagram',
+            category: 'productivity',
+            isSystemApp: true,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('TikTok family included when category unknown', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.zhiliaoapp.musically',
+            appName: 'TikTok',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('Facebook Services excluded as social_false_positive', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.facebook.services',
+            appName: 'Facebook Services',
+            category: 'unknown',
+            isLaunchable: true,
+          ),
+        ),
+        InstalledAppRelevanceDecision.notRelevant,
+      );
+    });
+
+    test('Reddit included via display name when category unknown', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.example.vendor',
+            appName: 'Reddit',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('LinkedIn package included when category missing', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.linkedin.android',
+            appName: 'LinkedIn',
+            category: '',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('YouTube included when category wrong and flagged system', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.google.android.youtube',
+            appName: 'YouTube',
+            category: 'productivity',
+            isSystemApp: true,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('Netflix included when category unknown', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.netflix.mediaclient',
+            appName: 'Netflix',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('VLC excluded as video_false_positive', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'org.videolan.vlc',
+            appName: 'VLC',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.notRelevant,
+      );
+    });
+
+    test('MX Player excluded as video_false_positive', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.mxtech.videoplayer.ad',
+            appName: 'MX Player',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.notRelevant,
+      );
+    });
+
+    test('Netflix included via display name when category unknown', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.example.vendor',
+            appName: 'Netflix',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('Roblox included when category wrong and flagged system', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.roblox.client',
+            appName: 'Roblox',
+            category: 'productivity',
+            isSystemApp: true,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('Google Play Games excluded as game_false_positive', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.google.android.play.games',
+            appName: 'Play Games',
+            category: 'game',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.notRelevant,
+      );
+    });
+
+    test('game booster package excluded as game_false_positive', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.example.gamebooster',
+            appName: 'Game Booster',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.notRelevant,
+      );
+    });
+
+    test('Minecraft included via display name when category unknown', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.example.vendor',
+            appName: 'Minecraft',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
   });
 
   group('categorizeInstalledApps', () {
-    test('includes clearlyRelevant and possiblyRelevant', () {
+    test('includes approved categories only; unknown omitted', () {
       final out = categorizeInstalledApps([
         _raw(packageName: 'a', category: 'social'),
         _raw(packageName: 'b', category: 'video'),
@@ -168,23 +432,19 @@ void main() {
         'c',
         'comm',
         'gm',
-        'd',
-        'e',
       });
       final byPkg = {for (final a in out) a.packageName: a};
-      expect(byPkg['d']!.isUnknownCategory, true);
-      expect(byPkg['e']!.isUnknownCategory, true);
       expect(byPkg['a']!.isUnknownCategory, false);
       expect(byPkg['gm']!.isUnknownCategory, false);
     });
 
-    test('excludes audio, maps, productivity, etc.', () {
+    test('includes music/audio; excludes maps, productivity', () {
       final out = categorizeInstalledApps([
         _raw(packageName: 'au', category: 'audio'),
         _raw(packageName: 'm', category: 'maps'),
         _raw(packageName: 'pr', category: 'productivity'),
       ]);
-      expect(out, isEmpty);
+      expect(out.map((e) => e.packageName).toSet(), {'au'});
     });
 
     test('dedupes by packageName', () {
@@ -236,6 +496,26 @@ void main() {
     });
   });
 
+  group('installedAppForRelevantRaw', () {
+    test('null when raw null or notRelevant', () {
+      expect(installedAppForRelevantRaw(null), isNull);
+      expect(
+        installedAppForRelevantRaw(_raw(packageName: 'm', category: 'maps')),
+        isNull,
+      );
+    });
+
+    test('same outcome as categorizeInstalledApps for one row', () {
+      final r = _raw(packageName: 'vid', appName: 'Clips', category: 'video');
+      final one = installedAppForRelevantRaw(r);
+      final list = categorizeInstalledApps([r]);
+      expect(one, isNotNull);
+      expect(list, hasLength(1));
+      expect(one!.packageName, list.single.packageName);
+      expect(one.isUnknownCategory, list.single.isUnknownCategory);
+    });
+  });
+
   group('visible list integration (Step 3)', () {
     test('clearlyRelevant rows are visible with isUnknownCategory false', () {
       final out = categorizeInstalledApps([
@@ -245,12 +525,11 @@ void main() {
       expect(out.single.isUnknownCategory, false);
     });
 
-    test('possiblyRelevant normal-name rows are visible with isUnknownCategory true', () {
+    test('unknown category with normal name is not in visible list', () {
       final out = categorizeInstalledApps([
         _raw(packageName: 'misc', appName: 'Photo Fun', category: 'unknown'),
       ]);
-      expect(out, hasLength(1));
-      expect(out.single.isUnknownCategory, true);
+      expect(out, isEmpty);
     });
 
     test('technical-noise unknown does not appear in visible list', () {

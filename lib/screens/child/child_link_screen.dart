@@ -1,10 +1,13 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
 
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../../debug_firebase_state.dart';
 import '../../core/config/genet_config.dart';
 import '../../repositories/child_link_status_repository.dart';
 import '../../repositories/children_repository.dart';
@@ -25,6 +28,14 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
   final _codeController = TextEditingController();
   String? _error;
   bool _linking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (kDebugMode) {
+      debugFirebaseState();
+    }
+  }
 
   @override
   void dispose() {
@@ -111,10 +122,17 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
         MaterialPageRoute(builder: (_) => const ChildHomeScreen()),
       );
     } catch (e) {
+      if (e is FirebaseException) {
+        debugPrint('[GENET][LINK_CHILD][ERROR] code=${e.code} message=${e.message}');
+      } else {
+        debugPrint('[GENET][LINK_CHILD][ERROR] unknown=$e');
+      }
       if (mounted) {
         setState(() {
           _linking = false;
-          _error = 'שגיאה בחיבור. נסה שוב.';
+          _error = kDebugMode
+              ? 'Error: ${e is FirebaseException ? e.code : e.toString()}'
+              : 'שגיאה בחיבור. נסה שוב.';
         });
       }
     }

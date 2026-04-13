@@ -2,17 +2,18 @@ import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io' show Platform;
 
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../debug_firebase_state.dart';
 import '../core/config/genet_config.dart';
 import '../repositories/child_link_status_repository.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../repositories/pending_link_repository.dart';
-import '../services/installed_apps_bridge.dart';
-import '../services/installed_apps_categorization.dart';
 import '../services/relevant_installed_apps_engine.dart';
 import 'child_home_screen.dart';
 
@@ -29,6 +30,14 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
   final _codeController = TextEditingController();
   String? _error;
   bool _linking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (kDebugMode) {
+      debugFirebaseState();
+    }
+  }
 
   @override
   void dispose() {
@@ -109,17 +118,11 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
       debugPrint('[RELEVANT_APPS] parentId=$parentId');
       debugPrint('[RELEVANT_APPS] childId=$childId');
       if (Platform.isAndroid) {
-        final rawList = await InstalledAppsBridge.fetchInstalledAppsRaw();
-        final relevantApps = categorizeInstalledApps(rawList);
-        RelevantInstalledAppsEngine.instance.applyFullRelevantState(
-          relevantApps,
-          rawList.length,
-        );
-        await syncRelevantApps(
+        await RelevantInstalledAppsEngine.instance.refreshFromFullDeviceScanAndSync(
           childId: childId,
-          relevantApps: relevantApps,
-          rawInstalledAppCount: rawList.length,
-          trigger: 'child_linked',
+          parentId: parentId,
+          mutationSource: 'child_link',
+          syncTrigger: 'child_linked',
         );
       }
       await setChildLinkStatusLinked(childId);
@@ -131,10 +134,17 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
         MaterialPageRoute(builder: (_) => const ChildHomeScreen()),
       );
     } catch (e) {
+      if (e is FirebaseException) {
+        debugPrint('[GENET][LINK_CHILD][ERROR] code=${e.code} message=${e.message}');
+      } else {
+        debugPrint('[GENET][LINK_CHILD][ERROR] unknown=$e');
+      }
       if (mounted) {
         setState(() {
           _linking = false;
-          _error = 'שגיאה בחיבור. נסה שוב.';
+          _error = kDebugMode
+              ? 'Error: ${e is FirebaseException ? e.code : e.toString()}'
+              : 'שגיאה בחיבור. נסה שוב.';
         });
       }
     }

@@ -5,8 +5,6 @@ import 'package:flutter/widgets.dart';
 import '../core/user_role.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
-import 'installed_apps_bridge.dart';
-import 'installed_apps_categorization.dart';
 import 'relevant_installed_apps_engine.dart';
 
 /// Step 5 — infrequent full scan + engine + [syncRelevantApps] when realtime may have missed events.
@@ -57,17 +55,11 @@ Future<void> runFallbackInstalledAppsRefresh() async {
 
     _lastFallbackRun = DateTime.now();
 
-    final rawList = await InstalledAppsBridge.fetchInstalledAppsRaw();
-    final relevantApps = categorizeInstalledApps(rawList);
-    RelevantInstalledAppsEngine.instance.applyFullRelevantState(
-      relevantApps,
-      rawList.length,
-    );
-    await syncRelevantApps(
+    await RelevantInstalledAppsEngine.instance.refreshFromFullDeviceScanAndSync(
       childId: childId,
-      relevantApps: relevantApps,
-      rawInstalledAppCount: rawList.length,
-      trigger: 'periodic_fallback',
+      parentId: parentId,
+      mutationSource: 'periodic_fallback',
+      syncTrigger: 'periodic_fallback',
     );
   } catch (e, st) {
     debugPrint('[InstalledAppsPeriodicFallback] runFallbackInstalledAppsRefresh: $e $st');

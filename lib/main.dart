@@ -1,14 +1,14 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'bootstrap/app_bootstrap.dart';
+import 'debug_firebase_state.dart';
 import 'core/config/genet_config.dart';
 import 'core/user_role.dart';
-import 'firebase_options.dart';
 import 'l10n/app_localizations.dart';
 import 'repositories/children_repository.dart';
 import 'providers/language_provider.dart';
@@ -21,9 +21,10 @@ import 'theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await initializeAppBootstrap();
+  if (kDebugMode) {
+    debugFirebaseState();
+  }
   await JsonTranslations.ensureLoaded();
   // Step 1 temporary: full installed-apps bridge dump (remove or gate when done verifying).
   if (kDebugMode && Platform.isAndroid) {

@@ -1,8 +1,11 @@
 import 'dart:async';
 
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../debug_firebase_state.dart';
 import '../models/child_entity.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
@@ -29,6 +32,9 @@ class _AddChildByLinkScreenState extends State<AddChildByLinkScreen> {
   @override
   void initState() {
     super.initState();
+    if (kDebugMode) {
+      debugFirebaseState();
+    }
     _createLink();
   }
 
@@ -50,10 +56,17 @@ class _AddChildByLinkScreenState extends State<AddChildByLinkScreen> {
         _creating = false;
       });
     } catch (e) {
+      if (e is FirebaseException) {
+        debugPrint('[GENET][LINK_CHILD][ERROR] code=${e.code} message=${e.message}');
+      } else {
+        debugPrint('[GENET][LINK_CHILD][ERROR] unknown=$e');
+      }
       if (mounted) {
         setState(() {
           _creating = false;
-          _error = 'לא ניתן ליצור חיבור. בדוק חיבור לאינטרנט.';
+          _error = kDebugMode
+              ? 'Error: ${e is FirebaseException ? e.code : e.toString()}'
+              : 'לא ניתן ליצור חיבור. בדוק חיבור לאינטרנט.';
         });
       }
     }

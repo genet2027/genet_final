@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../core/config/genet_config.dart';
 import '../core/user_role.dart';
 import '../core/extension_requests.dart';
+import '../features/blocked_apps/fixed_blockable_apps_catalog.dart';
 import '../models/child_entity.dart';
 import '../models/installed_app.dart';
 import '../repositories/children_repository.dart';
@@ -29,6 +30,8 @@ class BlockedAppsScreen extends StatefulWidget {
 
 class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
   List<InstalledApp> _installedApps = [];
+  /// Fixed catalog (YouTube, Facebook, Instagram) merged with [_installedApps] for the list UI.
+  List<ParentBlockedAppListRow> _displayAppRows = [];
   final List<String> _blockedPackages = [];
   List<ExtensionRequest> _extensionRequests = [];
   List<ChildEntity> _children = [];
@@ -251,6 +254,7 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
       _lastChildDocUiFingerprint = '';
       _lastInstalledAppsFingerprint = '';
       _installedApps = [];
+      _displayAppRows = [];
       _lastInstalledAppsCount = 0;
       _lastInstalledAppsSyncAt = null;
       _lastInstalledAppsSyncTrigger = '';
@@ -462,6 +466,7 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
       _installedAppsSub = null;
       _installedAppsAttachChildId = null;
       _installedApps = [];
+      _displayAppRows = [];
       _lastInstalledAppsFingerprint = '';
       _lastInstalledAppsCount = 0;
       _lastInstalledAppsSyncAt = null;
@@ -519,6 +524,7 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
       if (!newPkgs.contains(k)) _iconBytesCache.remove(k);
     }
     _installedApps = visible;
+    _displayAppRows = mergeFixedCatalogWithInstalled(visible);
     _logCriticalEvent('RELEVANT_APPS', {
       'SELECTED CHILD ID': sid,
       'localStateReplaced': true,
@@ -535,6 +541,7 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
     setState(() {
       _installedApps =
           _installedApps.where((a) => a.packageName != packageName).toList();
+      _displayAppRows = mergeFixedCatalogWithInstalled(_installedApps);
       _lastInstalledAppsCount = _installedApps.length;
       _lastInstalledAppsFingerprint = relevantInventorySyncFingerprint(_installedApps);
     });
@@ -569,6 +576,53 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
     }
     _maybeBumpApps();
     await _saveBlocked();
+  }
+
+  Future<void> _toggleBlockRow(ParentBlockedAppListRow row) async {
+    if (_selectedChildId == null || _selectedChildId!.isEmpty) return;
+    final genetPkg = await GenetConfig.getPackageName();
+    if (!row.isFixedCatalog) {
+      await _toggleBlock(row.blockPackageName);
+      return;
+    }
+    for (final p in row.matchPackages) {
+      if (genetPkg.isNotEmpty && p == genetPkg) return;
+    }
+    if (genetPkg.isNotEmpty && row.blockPackageName == genetPkg) return;
+    final blocked = row.isBlocked(_blockedPackages);
+    if (blocked) {
+      for (final p in row.matchPackages) {
+        _blockedPackages.remove(p);
+      }
+    } else {
+      _blockedPackages.add(row.blockPackageName);
+    }
+    _maybeBumpApps();
+    await _saveBlocked();
+  }
+
+  int? _remainingSecondsForRow(ParentBlockedAppListRow row) {
+    if (!row.isFixedCatalog) {
+      return _remainingSeconds(row.blockPackageName);
+    }
+    for (final p in row.matchPackages) {
+      final s = _remainingSeconds(p);
+      if (s != null) return s;
+    }
+    return null;
+  }
+
+  Future<void> _cancelExtensionForRow(ParentBlockedAppListRow row) async {
+    if (!row.isFixedCatalog) {
+      await _cancelExtension(row.blockPackageName);
+      return;
+    }
+    for (final p in row.matchPackages) {
+      if (_remainingSeconds(p) != null) {
+        await _cancelExtension(p);
+        return;
+      }
+    }
   }
 
   Future<void> _approveRequest(ExtensionRequest req) async {
@@ -926,19 +980,10 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
                                       ),
                                     ),
                                     const SizedBox(height: 16),
-                                    if (_installedApps.isEmpty)
-                                      Card(
-                                        child: const Padding(
-                                          padding: EdgeInsets.all(16),
-                                          child: Text(
-                                            'אין עדיין אפליקציות רלוונטיות לילד שנבחר.',
-                                          ),
-                                        ),
-                                      ),
                                   ],
                                 );
                               }
-                              if (index == _installedApps.length + 1) {
+                              if (index == _displayAppRows.length + 1) {
                                 return Padding(
                                   padding: const EdgeInsets.only(top: 8),
                                   child: Text(
@@ -950,34 +995,35 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
                                   ),
                                 );
                               }
-                              final app = _installedApps[index - 1];
-                              final packageName = app.packageName;
-                              final name = app.appName;
+                              final row = _displayAppRows[index - 1];
+                              final packageName = row.app.packageName;
                               const String? iconBase64 = null;
-                              final blocked =
-                                  _blockedPackages.contains(packageName);
-                              final hasActiveExtension = blocked &&
-                                  _remainingSeconds(packageName) != null;
+                              final blocked = row.isBlocked(_blockedPackages);
+                              final hasActiveExtension =
+                                  blocked && _remainingSecondsForRow(row) != null;
                               return _InstalledAppTile(
-                                key: ValueKey<String>('blocked_app_$packageName'),
+                                key: ValueKey<String>(row.stableListKey),
                                 packageName: packageName,
-                                label: name,
-                                isUnknownCategory: app.isUnknownCategory,
+                                label: row.displayName,
+                                isUnknownCategory:
+                                    row.isFixedCatalog ? false : row.app.isUnknownCategory,
                                 iconBase64: iconBase64,
                                 blocked: blocked,
                                 hasActiveExtension: hasActiveExtension,
-                                onToggle: () => _toggleBlock(packageName),
-                                onCancel: () => _cancelExtension(packageName),
-                                // Every visible row: manual hide (X) is never gated on category.
-                                onRemoveFromList: () =>
-                                    unawaited(_excludeFromRelevantList(packageName)),
+                                showInstalledGreenDot: row.installedOnChild,
+                                onToggle: () => unawaited(_toggleBlockRow(row)),
+                                onCancel: () => unawaited(_cancelExtensionForRow(row)),
+                                onRemoveFromList: row.allowRemoveFromList
+                                    ? () => unawaited(
+                                          _excludeFromRelevantList(row.blockPackageName),
+                                        )
+                                    : null,
                                 timerTick: _timerTick,
-                                remainingSeconds: () =>
-                                    _remainingSeconds(packageName),
+                                remainingSeconds: () => _remainingSecondsForRow(row),
                                 buildIcon: _buildAppIcon,
                               );
                             },
-                            childCount: _installedApps.length + 2,
+                            childCount: _displayAppRows.length + 2,
                           ),
                         ),
                       );
@@ -1024,9 +1070,10 @@ class _InstalledAppTile extends StatefulWidget {
     required this.iconBase64,
     required this.blocked,
     required this.hasActiveExtension,
+    required this.showInstalledGreenDot,
     required this.onToggle,
     required this.onCancel,
-    required this.onRemoveFromList,
+    this.onRemoveFromList,
     required this.timerTick,
     required this.remainingSeconds,
     required this.buildIcon,
@@ -1039,10 +1086,12 @@ class _InstalledAppTile extends StatefulWidget {
   final String? iconBase64;
   final bool blocked;
   final bool hasActiveExtension;
+  /// Green dot when [ParentBlockedAppListRow.installedOnChild] is true.
+  final bool showInstalledGreenDot;
   final VoidCallback onToggle;
   final VoidCallback onCancel;
-  /// Hide this app from the parent relevant list (persisted per child).
-  final VoidCallback onRemoveFromList;
+  /// Hide this app from the parent relevant list (persisted per child). Null for fixed catalog rows.
+  final VoidCallback? onRemoveFromList;
   final ValueNotifier<int> timerTick;
   final int? Function() remainingSeconds;
   final Widget? Function(String packageName, String? base64) buildIcon;
@@ -1065,13 +1114,28 @@ class _InstalledAppTileState extends State<_InstalledAppTile> {
             secondary: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                IconButton(
-                  icon: const Icon(Icons.close, size: 22),
-                  tooltip: 'הסר מהרשימה',
-                  onPressed: widget.onRemoveFromList,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-                ),
+                if (widget.onRemoveFromList != null)
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 22),
+                    tooltip: 'הסר מהרשימה',
+                    onPressed: widget.onRemoveFromList,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                  )
+                else
+                  const SizedBox(width: 8),
+                if (widget.showInstalledGreenDot)
+                  Padding(
+                    padding: const EdgeInsetsDirectional.only(end: 6),
+                    child: Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: Colors.green,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
                 widget.buildIcon(widget.packageName, widget.iconBase64) ??
                     const SizedBox(width: 40, height: 40),
               ],

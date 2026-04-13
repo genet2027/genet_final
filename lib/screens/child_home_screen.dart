@@ -21,7 +21,6 @@ import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../models/installed_app.dart';
 import '../services/installed_apps_bridge.dart';
-import '../services/installed_apps_categorization.dart';
 import '../services/installed_apps_periodic_fallback.dart';
 import '../services/night_mode_service.dart';
 import '../services/relevant_installed_apps_engine.dart';
@@ -584,17 +583,12 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
       _logCriticalEvent('RELEVANT_APPS', {
         'syncRelevantAppsStarted': trigger,
       });
-      final rawList = await InstalledAppsBridge.fetchInstalledAppsRaw();
-      final relevantApps = categorizeInstalledApps(rawList);
-      RelevantInstalledAppsEngine.instance.applyFullRelevantState(
-        relevantApps,
-        rawList.length,
-      );
-      final syncedCount = await syncRelevantApps(
+      final syncedCount =
+          await RelevantInstalledAppsEngine.instance.refreshFromFullDeviceScanAndSync(
         childId: childId,
-        relevantApps: relevantApps,
-        rawInstalledAppCount: rawList.length,
-        trigger: trigger,
+        parentId: parentId,
+        mutationSource: reason,
+        syncTrigger: trigger,
       );
       _logCriticalEvent('RELEVANT_APPS', {
         'syncRelevantAppsFinished': true,
@@ -1129,7 +1123,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     _installedAppsChangeSub?.cancel();
     _packageChangeFastPathSub?.cancel();
     _relevantLocalListSub?.cancel();
-    RelevantInstalledAppsEngine.instance.reset();
+    RelevantInstalledAppsEngine.instance.reset(mutationSource: 'child_home_dispose');
     resetInstalledAppsFallbackGuards();
     _enforcementSub?.cancel();
     _sleepLockSub?.cancel();
