@@ -575,11 +575,14 @@ class InstalledApp {
     return looksLikeVideoAppName(appName);
   }
 
-  /// Play Games, OEM hubs, boosters, SDK/test — not installable games for the blocklist.
+  /// Play Games, engines/SDKs, OEM hubs, boosters, emulators — not end-user games for the blocklist.
   static const List<String> _gamePackageFalsePositiveTerms = [
     'com.google.android.play.games',
     'google.android.play.games',
     'play.games',
+    'unity3d',
+    'unrealengine',
+    'epicgames.unreal',
     'gamebooster',
     'game.boost',
     'game_boost',
@@ -594,6 +597,8 @@ class InstalledApp {
     'gameplugins',
     'gameoverlay',
     'gamesdk',
+    'gameservices',
+    'gameanalytics',
     'coloros.gamespace',
     'oxygenos.gamespace',
     'realme.gamespace',
@@ -601,6 +606,10 @@ class InstalledApp {
     'miui.gameturbo',
     'samsung.android.game',
     'lg.world.game',
+    'bluestacks',
+    'noxplayer',
+    'ldplayer',
+    'lemuroid',
   ];
 
   static bool gamePackageLooksLikeFalsePositive(String packageLower) {
@@ -610,51 +619,32 @@ class InstalledApp {
     return false;
   }
 
+  /// Small set of widely used mobile game package ids (exact + tight vendor prefixes only).
   static const Set<String> _knownGameExactPackages = {
     'com.roblox.client',
     'com.tencent.ig',
     'com.pubg.krmobile',
     'com.tencent.tmgp.pubgmhd',
-    'com.dts.freefireth',
-    'com.dts.freefiremax',
-    'com.supercell.clashroyale',
     'com.supercell.clashofclans',
+    'com.supercell.clashroyale',
     'com.supercell.brawlstars',
-    'com.kitkagames.fallbuddies',
     'com.mojang.minecraftpe',
     'com.king.candycrushsaga',
     'com.sybo.subway',
     'com.miniclip.eightballpool',
     'com.activision.callofduty.shooter',
-    'com.innersloth.spacemafia',
-    'jp.konami.pesam',
+    'com.garena.game.codm',
     'com.ea.gp.fifamobile',
     'com.ea.fifaultimate',
-    'com.garena.game.codm',
   };
 
   static const List<String> _knownGamePackagePrefixes = [
     'com.supercell.',
-    'com.king.',
-    'com.miniclip.',
     'com.roblox.',
-    'com.epicgames.',
-    'com.activision.',
-    'com.ea.games.',
-    'com.ea.game.',
-    'com.ea.gp.',
-    'com.playrix.',
-    'com.moonactive.',
-    'com.tencent.ig',
-    'com.tencent.tmgp.',
-    'com.dts.freefire',
-    'com.kitkagames.',
     'com.mojang.',
     'com.sybo.',
-    'com.innersloth.',
-    'jp.konami.pes',
-    'com.riotgames.',
-    'com.garena.game',
+    'com.tencent.ig',
+    'com.activision.callofduty.',
   ];
 
   /// Strong package match for real mobile games (not Play Games / boosters / hubs).
@@ -664,39 +654,7 @@ class InstalledApp {
     if (isKnownSocialPackage(packageLower)) return false;
     if (isKnownVideoApp(packageLower)) return false;
     if (_knownGameExactPackages.contains(packageLower)) return true;
-    if (_knownGamePackagePrefixes.any(packageLower.startsWith)) return true;
-    const segments = <String>[
-      'roblox',
-      'freefire',
-      'clashofclans',
-      'clashroyale',
-      'brawlstars',
-      'minecraft',
-      'candycrush',
-      'sybo.subway',
-      'eightballpool',
-      'callofduty',
-      'spacemafia',
-      'innersloth',
-      'fallbuddies',
-      'stumbleguys',
-      'pubgm',
-      'tencent.ig',
-      'supercell',
-      'riotgames',
-      'epicgames',
-      'fortnite',
-      'fifamobile',
-      'fifaultimate',
-      'easportsfc',
-      'efootball',
-      'konami.pes',
-      'pesam',
-    ];
-    for (final s in segments) {
-      if (packageLower.contains(s)) return true;
-    }
-    return false;
+    return _knownGamePackagePrefixes.any(packageLower.startsWith);
   }
 
   /// Branded game titles only — no generic "game" / "play" / "arcade" alone.
@@ -707,11 +665,9 @@ class InstalledApp {
     const needles = <String>[
       'roblox',
       'pubg',
-      'free fire',
       'clash royale',
       'clash of clans',
       'brawl stars',
-      'stumble guys',
       'minecraft',
       'candy crush',
       'subway surfers',
@@ -720,8 +676,6 @@ class InstalledApp {
       'cod mobile',
       'fifa',
       'ea sports fc',
-      'efootball',
-      'among us',
     ];
     for (final s in needles) {
       if (n.contains(s)) return true;
@@ -736,6 +690,214 @@ class InstalledApp {
     if (gamePackageLooksLikeFalsePositive(packageLower)) return false;
     if (isKnownGamePackage(packageLower)) return true;
     return looksLikeGameAppName(appName);
+  }
+
+  /// RCS/IMS/carrier SMS plumbing, backup/migration, OEM plugins — not standalone chat apps.
+  static const List<String> _messagingPackageFalsePositiveTerms = [
+    'google.android.ims',
+    'rcsservice',
+    'ims.service',
+    'imsprovider',
+    'carrier.services',
+    'cellbroadcast',
+    'smsbackup',
+    'sms.restore',
+    'smsrestore',
+    'backuptrans',
+    'mms.service',
+    'telephonyui',
+    'conversation.plugin',
+    'messagesuite',
+    'msg.sdk',
+    'chat.sdk',
+    'pushservice',
+    'companiondevice',
+  ];
+
+  static bool messagingPackageLooksLikeFalsePositive(String packageLower) {
+    for (final t in _messagingPackageFalsePositiveTerms) {
+      if (packageLower.contains(t)) return true;
+    }
+    return false;
+  }
+
+  /// Small set of widely used chat app package ids (exact + tight prefixes; no broad "message" segments).
+  static const Set<String> _knownMessagingExactPackages = {
+    'com.whatsapp',
+    'com.whatsapp.w4b',
+    'com.whatsapp.business',
+    'org.telegram.messenger',
+    'org.thunderdog.challegram',
+    'org.thoughtcrime.securesms',
+    'com.viber.voip',
+    'jp.naver.line.android',
+    'com.tencent.mm',
+  };
+
+  static const List<String> _knownMessagingPackagePrefixes = [
+    'com.whatsapp.',
+    'org.telegram.',
+    'com.viber.',
+    'jp.naver.line.',
+    'com.tencent.mm',
+  ];
+
+  /// Strong package match for major chat apps (not stock SMS UIs — those use [isStockSmsUiPackage]).
+  static bool isKnownMessagingPackage(String packageLower) {
+    if (isStockSmsUiPackage(packageLower)) return false;
+    if (messagingPackageLooksLikeFalsePositive(packageLower)) return false;
+    if (isKnownBrowserPackage(packageLower)) return false;
+    if (isKnownSocialPackage(packageLower)) return false;
+    if (isKnownVideoApp(packageLower)) return false;
+    if (isKnownGamePackage(packageLower)) return false;
+    if (_knownMessagingExactPackages.contains(packageLower)) return true;
+    return _knownMessagingPackagePrefixes.any(packageLower.startsWith);
+  }
+
+  /// Branded chat titles only — no generic "message" / "chat" / "talk" / loose "messenger".
+  static bool looksLikeMessagingAppName(String appName) {
+    var n = appName.trim().toLowerCase();
+    n = n.replaceAll(RegExp(r'\s+'), ' ');
+    if (n.isEmpty) return false;
+    if (n == 'line') {
+      return true;
+    }
+    if (n.contains('messenger') &&
+        !n.contains('whatsapp') &&
+        !n.contains('telegram') &&
+        !n.contains('signal')) {
+      return false;
+    }
+    const phraseNeedles = <String>[
+      'whatsapp messenger',
+      'telegram messenger',
+      'signal private messenger',
+    ];
+    for (final p in phraseNeedles) {
+      if (n.contains(p)) return true;
+    }
+    const needles = <String>[
+      'whatsapp',
+      'telegram',
+      'signal',
+      'viber',
+      'wechat',
+    ];
+    for (final s in needles) {
+      if (n.contains(s)) return true;
+    }
+    return false;
+  }
+
+  static bool isApprovedMessagingApp(String packageLower, String appName) {
+    if (isKnownBrowserPackage(packageLower)) return false;
+    if (isKnownSocialPackage(packageLower)) return false;
+    if (isKnownVideoApp(packageLower)) return false;
+    if (isKnownGamePackage(packageLower)) return false;
+    if (messagingPackageLooksLikeFalsePositive(packageLower)) return false;
+    if (isKnownMessagingPackage(packageLower)) return true;
+    return looksLikeMessagingAppName(appName);
+  }
+
+  /// OEM equalizers, ringtone UIs, FX — not streaming music catalog apps.
+  static const List<String> _musicPackageFalsePositiveTerms = [
+    'musicfx',
+    'equalizer',
+    'ringtone',
+    'soundpicker',
+    'audiopolicy',
+    'voiceprint',
+    'voicerecognition',
+    'karaoke.factory',
+    'headsetsettings',
+    'audioservice',
+  ];
+
+  static bool musicPackageLooksLikeFalsePositive(String packageLower) {
+    for (final t in _musicPackageFalsePositiveTerms) {
+      if (packageLower.contains(t)) return true;
+    }
+    return false;
+  }
+
+  /// Streaming / radio brands (exact + tight prefixes).
+  static const Set<String> _knownMusicExactPackages = {
+    'com.spotify.music',
+    'com.google.android.apps.youtube.music',
+    'deezer.android.app',
+    'com.amazon.mp3',
+    'com.apple.android.music',
+    'com.aspiro.tidal',
+    'com.soundcloud.android',
+    'com.audiomack',
+    'com.afmobi.boomplayer',
+    'com.transsnet.boomplay',
+    'com.pandora.android',
+  };
+
+  static const List<String> _knownMusicPackagePrefixes = [
+    'com.spotify.music.',
+    'com.soundcloud.',
+    'deezer.android.',
+    'com.amazon.mp3',
+    'com.pandora.',
+  ];
+
+  /// Strong package match for major music streaming apps (not system audio helpers).
+  static bool isKnownMusicPackage(String packageLower) {
+    if (musicPackageLooksLikeFalsePositive(packageLower)) return false;
+    if (isKnownBrowserPackage(packageLower)) return false;
+    if (isKnownSocialPackage(packageLower)) return false;
+    if (isKnownVideoApp(packageLower) &&
+        packageLower != 'com.google.android.apps.youtube.music') {
+      return false;
+    }
+    if (isKnownGamePackage(packageLower)) return false;
+    if (isKnownMessagingPackage(packageLower)) return false;
+    if (_knownMusicExactPackages.contains(packageLower)) return true;
+    return _knownMusicPackagePrefixes.any(packageLower.startsWith);
+  }
+
+  /// Branded streaming titles only — no standalone "music" / "audio" / "player".
+  static bool looksLikeMusicAppName(String appName) {
+    var n = appName.trim().toLowerCase();
+    n = n.replaceAll(RegExp(r'\s+'), ' ');
+    if (n.isEmpty) return false;
+    const phraseNeedles = <String>[
+      'youtube music',
+      'apple music',
+      'amazon music',
+    ];
+    for (final p in phraseNeedles) {
+      if (n.contains(p)) return true;
+    }
+    const needles = <String>[
+      'spotify',
+      'deezer',
+      'tidal',
+      'soundcloud',
+      'audiomack',
+      'boomplay',
+      'pandora',
+    ];
+    for (final s in needles) {
+      if (n.contains(s)) return true;
+    }
+    return false;
+  }
+
+  static bool isApprovedMusicApp(String packageLower, String appName) {
+    if (isKnownBrowserPackage(packageLower)) return false;
+    if (isKnownSocialPackage(packageLower)) return false;
+    if (isKnownVideoApp(packageLower) &&
+        packageLower != 'com.google.android.apps.youtube.music') {
+      return false;
+    }
+    if (isKnownGamePackage(packageLower)) return false;
+    if (isKnownMessagingPackage(packageLower)) return false;
+    if (musicPackageLooksLikeFalsePositive(packageLower)) return false;
+    if (isKnownMusicPackage(packageLower)) return true;
+    return looksLikeMusicAppName(appName);
   }
 
   /// WebView / Trichrome — exclude from parent blocklist as standalone browsers.

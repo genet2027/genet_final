@@ -413,6 +413,236 @@ void main() {
         InstalledAppRelevanceDecision.clearlyRelevant,
       );
     });
+
+    test('Clash Royale included via package when category wrong', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.supercell.clashroyale',
+            appName: 'Clash Royale',
+            category: 'productivity',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('Unity engine package excluded as game_false_positive', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.unity3d.player',
+            appName: 'Unity',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.notRelevant,
+      );
+    });
+
+    test('WhatsApp included when category wrong and flagged system', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.whatsapp',
+            appName: 'WhatsApp',
+            category: 'productivity',
+            isSystemApp: true,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('Google RCS IMS excluded as messaging_false_positive', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.google.android.ims',
+            appName: 'Carrier Services',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.notRelevant,
+      );
+    });
+
+    test('Telegram included via display name when category unknown', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.example.vendor',
+            appName: 'Telegram',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('Samsung stock Messages still included via stock_sms_ui', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.samsung.android.messaging',
+            appName: 'Messages',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('Viber family package included via messaging_package_match', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.viber.partner',
+            appName: 'Viber Partner',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('WeChat family package included via messaging_package_match', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.tencent.mm.plugin',
+            appName: 'WeChat Plugin',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('Signal Private Messenger included via messaging_name_match', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.example.vendor',
+            appName: 'Signal Private Messenger',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('Facebook Messenger stays on Social path not Messaging', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.facebook.orca',
+            appName: 'Messenger',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('LINE title strict: unrelated name with line substring not Messaging', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.example.airline',
+            appName: 'Airline',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.notRelevant,
+      );
+    });
+
+    test('Spotify included when category wrong and flagged system', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.spotify.music',
+            appName: 'Spotify',
+            category: 'productivity',
+            isSystemApp: true,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test('OEM equalizer excluded as music_false_positive', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.example.equalizer',
+            appName: 'Sound Equalizer',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.notRelevant,
+      );
+    });
+
+    test('Apple Music included via display name when category unknown', () {
+      expect(
+        decideInstalledAppRelevance(
+          _raw(
+            packageName: 'com.example.vendor',
+            appName: 'Apple Music',
+            category: 'unknown',
+            isSystemApp: false,
+          ),
+        ),
+        InstalledAppRelevanceDecision.clearlyRelevant,
+      );
+    });
+
+    test(
+      'YouTube Music package is Music (music_package_match; Music evaluated before Video)',
+      () {
+        expect(
+          decideInstalledAppRelevance(
+            _raw(
+              packageName: 'com.google.android.apps.youtube.music',
+              appName: 'YouTube Music',
+              category: 'unknown',
+              isSystemApp: false,
+            ),
+          ),
+          InstalledAppRelevanceDecision.clearlyRelevant,
+        );
+      },
+    );
+
+    test(
+      'Regular YouTube package stays Video not Music (video_package_match)',
+      () {
+        expect(
+          decideInstalledAppRelevance(
+            _raw(
+              packageName: 'com.google.android.youtube',
+              appName: 'YouTube',
+              category: 'unknown',
+              isSystemApp: false,
+            ),
+          ),
+          InstalledAppRelevanceDecision.clearlyRelevant,
+        );
+      },
+    );
   });
 
   group('categorizeInstalledApps', () {

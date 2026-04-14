@@ -94,6 +94,18 @@ void _logGames(String msg) {
   }
 }
 
+void _logMessaging(String msg) {
+  if (kDebugMode) {
+    debugPrint('[BlockedAppsMessaging] $msg');
+  }
+}
+
+void _logMusic(String msg) {
+  if (kDebugMode) {
+    debugPrint('[BlockedAppsMusic] $msg');
+  }
+}
+
 /// Display-name fallback when package is not in [InstalledApp.isKnownBrowserPackage] lists.
 bool _looksLikeRealBrowserAppName(String appName) {
   if (looksLikeTechnicalOrUtilityNoise(appName)) return false;
@@ -169,7 +181,19 @@ bool _looksLikeGameAppNameForRelevance(String appName) {
   return InstalledApp.looksLikeGameAppName(appName);
 }
 
-/// Parent blocklist–driven relevance: approved categories + browser/social/video/games heuristics + stock SMS.
+/// Name-only chat signal; package matches use [InstalledApp.isKnownMessagingPackage] first.
+bool _looksLikeMessagingAppNameForRelevance(String appName) {
+  if (looksLikeTechnicalOrUtilityNoise(appName)) return false;
+  return InstalledApp.looksLikeMessagingAppName(appName);
+}
+
+/// Name-only music signal; package matches use [InstalledApp.isKnownMusicPackage] first.
+bool _looksLikeMusicAppNameForRelevance(String appName) {
+  if (looksLikeTechnicalOrUtilityNoise(appName)) return false;
+  return InstalledApp.looksLikeMusicAppName(appName);
+}
+
+/// Parent blocklist–driven relevance: approved categories + browser/social/music/video/games/messaging heuristics + stock SMS.
 /// Used for full scan and realtime add ([installedAppForRelevantRaw] / [categorizeInstalledApps]).
 InstalledAppRelevanceDecision decideInstalledAppRelevance(InstalledAppRaw app) {
   final pkg = app.packageName.toLowerCase();
@@ -218,6 +242,21 @@ InstalledAppRelevanceDecision decideInstalledAppRelevance(InstalledAppRaw app) {
     return InstalledAppRelevanceDecision.clearlyRelevant;
   }
 
+  if (InstalledApp.musicPackageLooksLikeFalsePositive(pkg)) {
+    _logMusic('exclude pkg=$pkg app=$appName reason=music_false_positive');
+    return InstalledAppRelevanceDecision.notRelevant;
+  }
+
+  if (InstalledApp.isKnownMusicPackage(pkg)) {
+    _logMusic('include pkg=$pkg app=$appName reason=music_package_match');
+    return InstalledAppRelevanceDecision.clearlyRelevant;
+  }
+
+  if (_looksLikeMusicAppNameForRelevance(appName)) {
+    _logMusic('include pkg=$pkg app=$appName reason=music_name_match');
+    return InstalledAppRelevanceDecision.clearlyRelevant;
+  }
+
   if (InstalledApp.videoPackageLooksLikeFalsePositive(pkg)) {
     _logVideo('exclude pkg=$pkg app=$appName reason=video_false_positive');
     return InstalledAppRelevanceDecision.notRelevant;
@@ -245,6 +284,21 @@ InstalledAppRelevanceDecision decideInstalledAppRelevance(InstalledAppRaw app) {
 
   if (_looksLikeGameAppNameForRelevance(appName)) {
     _logGames('include pkg=$pkg app=$appName reason=game_name_match');
+    return InstalledAppRelevanceDecision.clearlyRelevant;
+  }
+
+  if (InstalledApp.messagingPackageLooksLikeFalsePositive(pkg)) {
+    _logMessaging('exclude pkg=$pkg app=$appName reason=messaging_false_positive');
+    return InstalledAppRelevanceDecision.notRelevant;
+  }
+
+  if (InstalledApp.isKnownMessagingPackage(pkg)) {
+    _logMessaging('include pkg=$pkg app=$appName reason=messaging_package_match');
+    return InstalledAppRelevanceDecision.clearlyRelevant;
+  }
+
+  if (_looksLikeMessagingAppNameForRelevance(appName)) {
+    _logMessaging('include pkg=$pkg app=$appName reason=messaging_name_match');
     return InstalledAppRelevanceDecision.clearlyRelevant;
   }
 
@@ -389,7 +443,7 @@ InstalledApp? installedAppForRelevantRaw(InstalledAppRaw? raw) {
 /// Single public entry: [InstalledAppRaw] → [InstalledApp] for child relevant-app inventory.
 ///
 /// Child sync, realtime engine, and periodic fallback must use this only — no parallel filter.
-/// Uses [decideInstalledAppRelevance] (approved parent blocklist categories, browser/social/video/games/SMS detection, exclusions).
+/// Uses [decideInstalledAppRelevance] (approved parent blocklist categories, browser/social/music/video/games/messaging/SMS detection, exclusions).
 List<InstalledApp> categorizeInstalledApps(List<InstalledAppRaw> rawApps) {
   final byPackage = <String, InstalledApp>{};
   for (final raw in rawApps) {
