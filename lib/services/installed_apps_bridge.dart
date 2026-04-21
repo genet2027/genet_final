@@ -11,6 +11,12 @@ import '../models/package_change_event.dart';
 class InstalledAppsBridge {
   InstalledAppsBridge._();
 
+  /// When true (tests only), channel methods run so [MethodChannel] mocks apply off-Android.
+  @visibleForTesting
+  static bool forceChannelForTests = false;
+
+  static bool get _channelActive => forceChannelForTests || Platform.isAndroid;
+
   static const MethodChannel _channel = MethodChannel('genet/installed_apps');
 
   static final StreamController<PackageChangeEvent> _packageChangeController =
@@ -39,7 +45,7 @@ class InstalledAppsBridge {
       _packageChangeController.stream;
 
   static Future<List<InstalledAppRaw>> fetchInstalledAppsRaw() async {
-    if (!Platform.isAndroid) return [];
+    if (!_channelActive) return [];
     try {
       final raw = await _channel.invokeMethod<List<dynamic>>('getInstalledApps');
       if (raw == null) return [];
@@ -58,7 +64,7 @@ class InstalledAppsBridge {
 
   /// Single package row from native (Step 3). Returns null if uninstalled / error.
   static Future<InstalledAppRaw?> fetchInstalledAppRaw(String packageName) async {
-    if (!Platform.isAndroid) return null;
+    if (!_channelActive) return null;
     final pkg = packageName.trim();
     if (pkg.isEmpty) return null;
     try {

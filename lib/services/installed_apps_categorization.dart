@@ -23,6 +23,15 @@ enum InstalledAppRelevanceDecision {
   notRelevant,
 }
 
+/// Result of relevance decision: optional winning heuristic family for [InstalledApp.category].
+class InstalledAppRelevanceOutcome {
+  const InstalledAppRelevanceOutcome(this.decision, {this.winningHeuristicCategory});
+
+  final InstalledAppRelevanceDecision decision;
+  /// When non-null, the app was included via that heuristic path (not store-category fallback).
+  final String? winningHeuristicCategory;
+}
+
 /// Normalized display name for noise checks: lowercase, trim, collapse spaces.
 String _normalizeDisplayNameForNoise(String appName) {
   var s = appName.trim().toLowerCase();
@@ -195,7 +204,7 @@ bool _looksLikeMusicAppNameForRelevance(String appName) {
 
 /// Parent blocklist–driven relevance: approved categories + browser/social/music/video/games/messaging heuristics + stock SMS.
 /// Used for full scan and realtime add ([installedAppForRelevantRaw] / [categorizeInstalledApps]).
-InstalledAppRelevanceDecision decideInstalledAppRelevance(InstalledAppRaw app) {
+InstalledAppRelevanceOutcome _decideInstalledAppRelevanceOutcome(InstalledAppRaw app) {
   final pkg = app.packageName.toLowerCase();
   final rawCat = app.category;
   final appName = app.appName;
@@ -204,116 +213,155 @@ InstalledAppRelevanceDecision decideInstalledAppRelevance(InstalledAppRaw app) {
     _logCategoryFilter(
       'exclude pkg=$pkg app=$appName rawCategory=$rawCat reason=not_launchable',
     );
-    return InstalledAppRelevanceDecision.notRelevant;
+    return const InstalledAppRelevanceOutcome(InstalledAppRelevanceDecision.notRelevant);
   }
 
   if (InstalledApp.isWebViewEnginePackage(pkg)) {
     _logBrowser('exclude pkg=$pkg app=$appName reason=webview_engine');
-    return InstalledAppRelevanceDecision.notRelevant;
+    return const InstalledAppRelevanceOutcome(InstalledAppRelevanceDecision.notRelevant);
   }
 
   if (InstalledApp.isKnownBrowserPackage(pkg)) {
     _logBrowser('include pkg=$pkg app=$appName reason=browser_package_match');
-    return InstalledAppRelevanceDecision.clearlyRelevant;
+    return const InstalledAppRelevanceOutcome(
+      InstalledAppRelevanceDecision.clearlyRelevant,
+      winningHeuristicCategory: 'browser',
+    );
   }
 
   if (InstalledApp.browserPackageLooksLikeEngineOrHelper(pkg)) {
     _logBrowser('exclude pkg=$pkg app=$appName reason=browser_false_positive');
-    return InstalledAppRelevanceDecision.notRelevant;
+    return const InstalledAppRelevanceOutcome(InstalledAppRelevanceDecision.notRelevant);
   }
 
   if (_looksLikeRealBrowserAppName(appName)) {
     _logBrowser('include pkg=$pkg app=$appName reason=browser_name_match');
-    return InstalledAppRelevanceDecision.clearlyRelevant;
+    return const InstalledAppRelevanceOutcome(
+      InstalledAppRelevanceDecision.clearlyRelevant,
+      winningHeuristicCategory: 'browser',
+    );
   }
 
   if (InstalledApp.socialPackageLooksLikeFalsePositive(pkg)) {
     _logSocial('exclude pkg=$pkg app=$appName reason=social_false_positive');
-    return InstalledAppRelevanceDecision.notRelevant;
+    return const InstalledAppRelevanceOutcome(InstalledAppRelevanceDecision.notRelevant);
   }
 
   if (InstalledApp.isKnownSocialPackage(pkg)) {
     _logSocial('include pkg=$pkg app=$appName reason=social_package_match');
-    return InstalledAppRelevanceDecision.clearlyRelevant;
+    return const InstalledAppRelevanceOutcome(
+      InstalledAppRelevanceDecision.clearlyRelevant,
+      winningHeuristicCategory: 'social',
+    );
   }
 
   if (_looksLikeSocialAppNameForRelevance(appName)) {
     _logSocial('include pkg=$pkg app=$appName reason=social_name_match');
-    return InstalledAppRelevanceDecision.clearlyRelevant;
+    return const InstalledAppRelevanceOutcome(
+      InstalledAppRelevanceDecision.clearlyRelevant,
+      winningHeuristicCategory: 'social',
+    );
   }
 
   if (InstalledApp.musicPackageLooksLikeFalsePositive(pkg)) {
     _logMusic('exclude pkg=$pkg app=$appName reason=music_false_positive');
-    return InstalledAppRelevanceDecision.notRelevant;
+    return const InstalledAppRelevanceOutcome(InstalledAppRelevanceDecision.notRelevant);
   }
 
   if (InstalledApp.isKnownMusicPackage(pkg)) {
     _logMusic('include pkg=$pkg app=$appName reason=music_package_match');
-    return InstalledAppRelevanceDecision.clearlyRelevant;
+    return const InstalledAppRelevanceOutcome(
+      InstalledAppRelevanceDecision.clearlyRelevant,
+      winningHeuristicCategory: 'music',
+    );
   }
 
   if (_looksLikeMusicAppNameForRelevance(appName)) {
     _logMusic('include pkg=$pkg app=$appName reason=music_name_match');
-    return InstalledAppRelevanceDecision.clearlyRelevant;
+    return const InstalledAppRelevanceOutcome(
+      InstalledAppRelevanceDecision.clearlyRelevant,
+      winningHeuristicCategory: 'music',
+    );
   }
 
   if (InstalledApp.videoPackageLooksLikeFalsePositive(pkg)) {
     _logVideo('exclude pkg=$pkg app=$appName reason=video_false_positive');
-    return InstalledAppRelevanceDecision.notRelevant;
+    return const InstalledAppRelevanceOutcome(InstalledAppRelevanceDecision.notRelevant);
   }
 
   if (InstalledApp.isKnownVideoApp(pkg)) {
     _logVideo('include pkg=$pkg app=$appName reason=video_package_match');
-    return InstalledAppRelevanceDecision.clearlyRelevant;
+    return const InstalledAppRelevanceOutcome(
+      InstalledAppRelevanceDecision.clearlyRelevant,
+      winningHeuristicCategory: 'video',
+    );
   }
 
   if (_looksLikeVideoAppNameForRelevance(appName)) {
     _logVideo('include pkg=$pkg app=$appName reason=video_name_match');
-    return InstalledAppRelevanceDecision.clearlyRelevant;
+    return const InstalledAppRelevanceOutcome(
+      InstalledAppRelevanceDecision.clearlyRelevant,
+      winningHeuristicCategory: 'video',
+    );
   }
 
   if (InstalledApp.gamePackageLooksLikeFalsePositive(pkg)) {
     _logGames('exclude pkg=$pkg app=$appName reason=game_false_positive');
-    return InstalledAppRelevanceDecision.notRelevant;
+    return const InstalledAppRelevanceOutcome(InstalledAppRelevanceDecision.notRelevant);
   }
 
   if (InstalledApp.isKnownGamePackage(pkg)) {
     _logGames('include pkg=$pkg app=$appName reason=game_package_match');
-    return InstalledAppRelevanceDecision.clearlyRelevant;
+    return const InstalledAppRelevanceOutcome(
+      InstalledAppRelevanceDecision.clearlyRelevant,
+      winningHeuristicCategory: 'games',
+    );
   }
 
   if (_looksLikeGameAppNameForRelevance(appName)) {
     _logGames('include pkg=$pkg app=$appName reason=game_name_match');
-    return InstalledAppRelevanceDecision.clearlyRelevant;
+    return const InstalledAppRelevanceOutcome(
+      InstalledAppRelevanceDecision.clearlyRelevant,
+      winningHeuristicCategory: 'games',
+    );
   }
 
   if (InstalledApp.messagingPackageLooksLikeFalsePositive(pkg)) {
     _logMessaging('exclude pkg=$pkg app=$appName reason=messaging_false_positive');
-    return InstalledAppRelevanceDecision.notRelevant;
+    return const InstalledAppRelevanceOutcome(InstalledAppRelevanceDecision.notRelevant);
   }
 
   if (InstalledApp.isKnownMessagingPackage(pkg)) {
     _logMessaging('include pkg=$pkg app=$appName reason=messaging_package_match');
-    return InstalledAppRelevanceDecision.clearlyRelevant;
+    return const InstalledAppRelevanceOutcome(
+      InstalledAppRelevanceDecision.clearlyRelevant,
+      winningHeuristicCategory: 'messaging',
+    );
   }
 
   if (_looksLikeMessagingAppNameForRelevance(appName)) {
     _logMessaging('include pkg=$pkg app=$appName reason=messaging_name_match');
-    return InstalledAppRelevanceDecision.clearlyRelevant;
+    return const InstalledAppRelevanceOutcome(
+      InstalledAppRelevanceDecision.clearlyRelevant,
+      winningHeuristicCategory: 'messaging',
+    );
   }
 
   if (InstalledApp.isStockSmsUiPackage(pkg)) {
     _logCategoryFilter(
       'include pkg=$pkg app=$appName rawCategory=$rawCat normalized=Messaging reason=stock_sms_ui',
     );
-    return InstalledAppRelevanceDecision.clearlyRelevant;
+    return const InstalledAppRelevanceOutcome(
+      InstalledAppRelevanceDecision.clearlyRelevant,
+      winningHeuristicCategory: 'messaging',
+    );
   }
 
   if (app.isSystemApp) {
     _logCategoryFilter(
       'exclude pkg=$pkg app=$appName rawCategory=$rawCat reason=system_app',
     );
-    return InstalledAppRelevanceDecision.notRelevant;
+    return const InstalledAppRelevanceOutcome(InstalledAppRelevanceDecision.notRelevant);
   }
 
   if (looksLikeTechnicalOrUtilityNoise(appName)) {
@@ -321,7 +369,7 @@ InstalledAppRelevanceDecision decideInstalledAppRelevance(InstalledAppRaw app) {
     _logCategoryFilter(
       'exclude pkg=$pkg app=$appName rawCategory=$rawCat normalized=$normEarly reason=technical_noise_helper',
     );
-    return InstalledAppRelevanceDecision.notRelevant;
+    return const InstalledAppRelevanceOutcome(InstalledAppRelevanceDecision.notRelevant);
   }
 
   final normalized = normalizeInstalledAppCategory(rawCat);
@@ -339,27 +387,42 @@ InstalledAppRelevanceDecision decideInstalledAppRelevance(InstalledAppRaw app) {
     _logCategoryFilter(
       'exclude pkg=$pkg app=$appName rawCategory=$rawCat normalized=unknown reason=not_approved_category',
     );
-    return InstalledAppRelevanceDecision.notRelevant;
+    return const InstalledAppRelevanceOutcome(InstalledAppRelevanceDecision.notRelevant);
   }
 
   if (!approvedNormalized.contains(normalized)) {
     _logCategoryFilter(
       'exclude pkg=$pkg app=$appName rawCategory=$rawCat normalized=$normalized reason=not_approved_category',
     );
-    return InstalledAppRelevanceDecision.notRelevant;
+    return const InstalledAppRelevanceOutcome(InstalledAppRelevanceDecision.notRelevant);
   }
 
   final label = _approvedParentBlockCategoryLabel(normalized);
   _logCategoryFilter(
     'include pkg=$pkg app=$appName rawCategory=$rawCat normalized=$label reason=approved_category',
   );
-  return InstalledAppRelevanceDecision.clearlyRelevant;
+  return const InstalledAppRelevanceOutcome(InstalledAppRelevanceDecision.clearlyRelevant);
 }
+
+InstalledAppRelevanceDecision decideInstalledAppRelevance(InstalledAppRaw app) =>
+    _decideInstalledAppRelevanceOutcome(app).decision;
 
 /// Lowercase, trim; maps Play / OEM phrasing into known category tokens where possible.
 String normalizeInstalledAppCategory(String? raw) {
   var s = (raw ?? '').trim().toLowerCase().replaceAll('_', ' ');
   if (s.isEmpty) return 'unknown';
+
+  /// [InstalledApp.category] heuristic family tokens → canonical tokens (e.g. sync fingerprint).
+  const heuristicStoredToNormalized = <String, String>{
+    'browser': 'browser',
+    'social': 'social',
+    'video': 'video',
+    'games': 'game',
+    'messaging': 'communication',
+    'music': 'audio',
+  };
+  final fromHeuristicStored = heuristicStoredToNormalized[s];
+  if (fromHeuristicStored != null) return fromHeuristicStored;
 
   const directAliases = <String, String>{
     'music and audio': 'audio',
@@ -418,10 +481,11 @@ void _logCategoryFilter(String msg) {
 /// add/remove matches full-scan behavior without a temporary unclassified insert.
 InstalledApp? installedAppForRelevantRaw(InstalledAppRaw? raw) {
   if (raw == null) return null;
-  final decision = decideInstalledAppRelevance(raw);
-  if (decision == InstalledAppRelevanceDecision.notRelevant) return null;
+  final outcome = _decideInstalledAppRelevanceOutcome(raw);
+  if (outcome.decision == InstalledAppRelevanceDecision.notRelevant) return null;
 
-  final normalized = normalizeInstalledAppCategory(raw.category);
+  final category =
+      outcome.winningHeuristicCategory ?? normalizeInstalledAppCategory(raw.category);
   final isUnknownCategory = false;
 
   return InstalledApp(
@@ -429,7 +493,7 @@ InstalledApp? installedAppForRelevantRaw(InstalledAppRaw? raw) {
     appName: raw.appName,
     isSystemApp: raw.isSystemApp,
     isLaunchable: raw.isLaunchable,
-    category: normalized,
+    category: category,
     isUnknownCategory: isUnknownCategory,
     versionName: raw.versionName,
     versionCode: raw.versionCode,

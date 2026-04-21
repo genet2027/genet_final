@@ -238,6 +238,18 @@ String relevantInventorySyncFingerprint(List<InstalledApp> apps) {
       .join(',');
 }
 
+/// Test-only hook: when set, [syncRelevantApps] skips Firestore (engine / integration tests).
+@visibleForTesting
+typedef SyncRelevantAppsTestHook = Future<int> Function({
+  required String childId,
+  required List<InstalledApp> relevantApps,
+  required int rawInstalledAppCount,
+  String trigger,
+});
+
+@visibleForTesting
+SyncRelevantAppsTestHook? debugSyncRelevantAppsForTests;
+
 /// Single child → backend write for relevant installed apps (full replace). Callers supply filtered list + raw count.
 ///
 /// Does not scan, categorize, or read native lists. [relevantApps] must already be Step‑2 filtered.
@@ -247,6 +259,15 @@ Future<int> syncRelevantApps({
   required int rawInstalledAppCount,
   String trigger = 'unknown',
 }) async {
+  final hook = debugSyncRelevantAppsForTests;
+  if (hook != null) {
+    return hook(
+      childId: childId,
+      relevantApps: relevantApps,
+      rawInstalledAppCount: rawInstalledAppCount,
+      trigger: trigger,
+    );
+  }
   final normalizedChildId = normalizeIdentifier(childId);
   if (normalizedChildId == null) {
     debugPrint('[RELEVANT_APPS] CHILD ID: invalid');

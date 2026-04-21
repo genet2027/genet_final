@@ -735,6 +735,18 @@ void main() {
       );
     });
 
+    test('heuristic browser win sets category browser not junk raw store category', () {
+      final chrome = installedAppForRelevantRaw(
+        _raw(
+          packageName: 'com.android.chrome',
+          appName: 'Chrome',
+          category: 'junk_unknown_xyz',
+        ),
+      );
+      expect(chrome, isNotNull);
+      expect(chrome!.category, 'browser');
+    });
+
     test('same outcome as categorizeInstalledApps for one row', () {
       final r = _raw(packageName: 'vid', appName: 'Clips', category: 'video');
       final one = installedAppForRelevantRaw(r);
