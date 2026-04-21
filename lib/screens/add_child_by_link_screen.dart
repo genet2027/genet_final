@@ -28,6 +28,7 @@ class _AddChildByLinkScreenState extends State<AddChildByLinkScreen> {
   bool _creating = true;
   StreamSubscription? _subscription;
   bool _childAdded = false;
+  bool _linkInProgress = false;
 
   @override
   void initState() {
@@ -73,29 +74,62 @@ class _AddChildByLinkScreenState extends State<AddChildByLinkScreen> {
   }
 
   void _onChildLinked(ChildEntity child) {
-    if (_childAdded) return;
-    _childAdded = true;
-    _subscription?.cancel();
+    if (_childAdded || _linkInProgress) return;
+    _linkInProgress = true;
+    unawaited(_completeParentSideLink(child));
+  }
+
+  Future<void> _completeParentSideLink(ChildEntity child) async {
     final parentId = _parentId;
     final code = _code;
-    if (parentId == null || code == null) return;
+    if (parentId == null || code == null) {
+      _linkInProgress = false;
+      return;
+    }
     final entity = child.copyWith(
       isConnected: true,
       connectionStatus: ChildConnectionStatus.connected,
     );
-    addOrUpdateChild(entity).then((_) async {
+    try {
+      await addOrUpdateChild(entity);
       await setSelectedChildId(child.childId);
-    });
-    upsertParentChildDoc(
-      parentId: parentId,
-      childId: child.childId,
-      firstName: child.firstName,
-      lastName: child.lastName,
-      name: child.name,
-      age: child.age,
-      schoolCode: child.schoolCode,
-      linkCode: code,
-    ).then((_) async {
+      await upsertParentChildDoc(
+        parentId: parentId,
+        childId: child.childId,
+        firstName: child.firstName,
+        lastName: child.lastName,
+        name: child.name,
+        age: child.age,
+        schoolCode: child.schoolCode,
+        linkCode: code,
+      );
+      final ok = await waitForCanonicalChildConnected(
+        parentId: parentId,
+        childId: child.childId,
+      );
+      if (!ok) {
+        final snap = await readCanonicalChildData(parentId, child.childId);
+        final docCode = normalizeIdentifier(snap?['linkCode'] as String?);
+        final sessionCode = normalizeIdentifier(code);
+        final remoteLooksActive = snap != null &&
+            canonicalChildDataActiveForParent(snap, parentId) &&
+            docCode != null &&
+            sessionCode != null &&
+            docCode == sessionCode;
+        if (!remoteLooksActive) {
+          await removeChild(child.childId);
+        }
+        if (mounted) {
+          setState(() {
+            _error = kDebugMode
+                ? 'Canonical link not confirmed (timeout). Try again.'
+                : 'החיבור לא אושר. נסה שוב.';
+          });
+        }
+        _subscription?.cancel();
+        _linkInProgress = false;
+        return;
+      }
       await setPendingLinkParentId(code, parentId);
       final blocked = await getBlockedPackagesForChild(child.childId);
       final approved = await getExtensionApprovedForChild(child.childId);
@@ -103,15 +137,36 @@ class _AddChildByLinkScreenState extends State<AddChildByLinkScreen> {
         await syncBlockedPackagesToFirebase(parentId, child.childId, blocked);
         await syncExtensionApprovedToFirebase(parentId, child.childId, approved);
       }
-    });
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('הילד ${child.name} התחבר בהצלחה'),
-        backgroundColor: Colors.green,
-      ),
-    );
-    Navigator.pop(context);
+      if (!mounted) {
+        _linkInProgress = false;
+        return;
+      }
+      _subscription?.cancel();
+      _childAdded = true;
+      _linkInProgress = false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('הילד ${child.name} התחבר בהצלחה'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      Navigator.pop(context);
+    } catch (e) {
+      if (e is FirebaseException) {
+        debugPrint('[GENET][LINK_CHILD][ERROR] code=${e.code} message=${e.message}');
+      } else {
+        debugPrint('[GENET][LINK_CHILD][ERROR] unknown=$e');
+      }
+      if (mounted) {
+        setState(() {
+          _error = kDebugMode
+              ? 'Error: ${e is FirebaseException ? e.code : e.toString()}'
+              : 'שגיאה בחיבור. נסה שוב.';
+        });
+      }
+      _subscription?.cancel();
+      _linkInProgress = false;
+    }
   }
 
   @override

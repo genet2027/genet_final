@@ -69,6 +69,9 @@ class _NativeVpnSnapshot {
 
 /// Child home: connection status from Firebase only. When parent disconnects, UI updates in place.
 ///
+/// [canonicalStartupPreflightUnverified]: role-select could not confirm the canonical doc within
+/// the startup window; connection UI waits on the stream / stale reconcile (prefs are not proof).
+///
 /// Orchestration layout (search for section headers):
 /// - Lifecycle & dispose
 /// - Child-mode bootstrap (timers, listeners after role check)
@@ -91,7 +94,13 @@ class _NativeVpnSnapshot {
 ///   directly but may [setState] → rebuild → evaluate/apply.
 /// - Installed-app sync: does not call the flow; indirect protection updates only if Firestore/policy changes.
 class ChildHomeScreen extends StatefulWidget {
-  const ChildHomeScreen({super.key});
+  const ChildHomeScreen({
+    super.key,
+    this.canonicalStartupPreflightUnverified = false,
+  });
+
+  /// When true, show a short-lived “verifying” hint until the child-doc stream resolves.
+  final bool canonicalStartupPreflightUnverified;
 
   @override
   State<ChildHomeScreen> createState() => _ChildHomeScreenState();
@@ -103,6 +112,9 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
   // ---------------------------------------------------------------------------
   static const int _trustedTimeRefreshIntervalMs = 10 * 60 * 1000;
   static const int _timeTamperToleranceMs = 90 * 1000;
+
+  /// Grace period before treating a null canonical snapshot as stale while local link prefs exist.
+  static const Duration _staleCanonicalDocGrace = Duration(seconds: 15);
 
   static const EventChannel _enforcementChannel = EventChannel(
     'genet/enforcement',
@@ -118,9 +130,15 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
   bool? _firebaseConnectionStatus;
   String? _linkedNameForDisplay;
 
+  /// Copied from [ChildHomeScreen.canonicalStartupPreflightUnverified] at init.
+  bool _canonicalStartupPreflightUnverified = false;
+
   /// Timer: keep native prefs in sync when schedule windows cross.
   Timer? _nightCheckTimer;
   Timer? _installedAppsFallbackTimer;
+
+  /// If the canonical child doc stays missing while prefs claim a link, reconcile after [_staleCanonicalDocGrace].
+  Timer? _staleCanonicalDocTimer;
 
   /// Re-apply VPN when extension windows start/end without waiting for the next Firestore write.
   Timer? _extensionVpnTimer;
@@ -198,6 +216,8 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
   @override
   void initState() {
     super.initState();
+    _canonicalStartupPreflightUnverified =
+        widget.canonicalStartupPreflightUnverified;
     _childProtectionFlow = ChildProtectionFlow(logCritical: _logCriticalEvent);
     WidgetsBinding.instance.addObserver(this);
     unawaited(_clearVpnProtectionLostInNative());
@@ -951,7 +971,8 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
   // ---------------------------------------------------------------------------
   Future<void> _onSyncedChildDataEvent(
     SyncedChildData? data,
-    String childId,
+    String expectedParentId,
+    String expectedChildId,
   ) async {
     if (!mounted) return;
     final role = await getUserRole();
@@ -960,17 +981,37 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     _logCriticalEvent('GenetDebug', {
       'ROLE': role,
       'PARENT ID': docParentId,
-      'CHILD ID': childId,
+      'CHILD ID': expectedChildId,
       'CONNECTION STATUS': status ?? 'null',
     });
-    // Only treat as disconnected when Firebase explicitly says so (doc exists and status/parentId indicate disconnect).
-    // Do NOT treat null data as disconnect: doc may not exist yet right after connect (race).
+    // Null snapshot: usually transient (first load / race). After a bounded grace period with prefs
+    // still claiming a link, reconcile against a server read — persistent missing doc clears local link.
     if (data == null) {
-      developer.log('Child connection status: no doc yet (loading), not disconnecting', name: 'Sync');
+      developer.log(
+        'Child connection status: canonical snapshot null (transient or missing); scheduling stale check',
+        name: 'Sync',
+      );
+      _staleCanonicalDocTimer ??= Timer(_staleCanonicalDocGrace, () {
+        _staleCanonicalDocTimer = null;
+        unawaited(
+          _reconcileStaleCanonicalLink(
+            expectedParentId: expectedParentId,
+            expectedChildId: expectedChildId,
+          ),
+        );
+      });
       return;
     }
-    final isConnected = isConnectionStatusConnected(status) &&
-        (docParentId != null && docParentId.isNotEmpty);
+    _staleCanonicalDocTimer?.cancel();
+    _staleCanonicalDocTimer = null;
+    _canonicalStartupPreflightUnverified = false;
+
+    final expectedParentNorm = normalizeIdentifier(expectedParentId);
+    final docParentNorm = normalizeIdentifier(data.parentId);
+    final parentMatches =
+        expectedParentNorm != null && docParentNorm == expectedParentNorm;
+    final isConnected =
+        isConnectionStatusConnected(data.connectionStatus) && parentMatches;
     if (isConnected) {
       developer.log('Child connected (from Firebase)', name: 'Sync');
       final wasConnected = _firebaseConnectionStatus == true;
@@ -1036,8 +1077,41 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
         });
       }
     } else {
-      developer.log('Child disconnected (from Firebase) status=$status parentId=$docParentId', name: 'Sync');
+      developer.log(
+        'Child disconnected (from Firebase) status=$status parentId=$docParentId expectedParent=$expectedParentId',
+        name: 'Sync',
+      );
       await _handleDisconnected();
+    }
+  }
+
+  /// After [ChildHomeScreen._staleCanonicalDocGrace], re-check canonical doc vs local prefs and clear stale links.
+  Future<void> _reconcileStaleCanonicalLink({
+    required String expectedParentId,
+    required String expectedChildId,
+  }) async {
+    if (!mounted) return;
+    final role = await getUserRole();
+    if (role != kUserRoleChild) return;
+    final prefsParent = normalizeIdentifier(await getLinkedParentId());
+    final prefsChild = normalizeIdentifier(await getLinkedChildId());
+    if (prefsParent == null || prefsChild == null) return;
+    if (prefsParent != normalizeIdentifier(expectedParentId) ||
+        prefsChild != normalizeIdentifier(expectedChildId)) {
+      developer.log('Stale canonical reconcile skipped: local prefs changed', name: 'Sync');
+      return;
+    }
+    try {
+      final raw = await readCanonicalChildData(expectedParentId, expectedChildId);
+      if (raw == null || !canonicalChildDataActiveForParent(raw, expectedParentId)) {
+        developer.log(
+          'Stale canonical reconcile: doc missing or not connected for prefs; clearing local link',
+          name: 'Sync',
+        );
+        await _handleDisconnected();
+      }
+    } catch (e, st) {
+      developer.log('Stale canonical reconcile read failed: $e $st', name: 'Sync');
     }
   }
 
@@ -1049,6 +1123,8 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
       if (mounted) setState(() => _firebaseConnectionStatus = false);
       return;
     }
+    _staleCanonicalDocTimer?.cancel();
+    _staleCanonicalDocTimer = null;
     _logCriticalEvent('GenetDebug', {
       'ROLE': await getUserRole(),
       'PARENT ID': parentId,
@@ -1059,11 +1135,13 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     developer.log('CHILD_READ_CHILD_ID = $childId', name: 'Sync');
     if (mounted) setState(() => _firebaseConnectionStatus = null);
     _firebaseSyncSub = watchSyncedChildDataStream(parentId, childId).listen(
-      (data) => unawaited(_onSyncedChildDataEvent(data, childId)),
+      (data) => unawaited(_onSyncedChildDataEvent(data, parentId, childId)),
     );
   }
 
   void _tearDownExtensionAndFirebaseListenersOnDisconnect() {
+    _staleCanonicalDocTimer?.cancel();
+    _staleCanonicalDocTimer = null;
     VpnRemoteChildPolicy.resetPushDedupe();
     _extensionVpnTimer?.cancel();
     _extensionVpnTimer = null;
@@ -1117,6 +1195,8 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     _extensionVpnTimer?.cancel();
     _installedAppsSyncDebounceTimer?.cancel();
     _vpnStatusMonitorTimer?.cancel();
+    _staleCanonicalDocTimer?.cancel();
+    _staleCanonicalDocTimer = null;
   }
 
   void _disposeChildHomeStreamSubscriptions() {
@@ -1366,6 +1446,38 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
                 return ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              if (_canonicalStartupPreflightUnverified &&
+                  _firebaseConnectionStatus == null) ...[
+                Card(
+                  elevation: 1,
+                  color: Colors.blue.shade50,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      textDirection: TextDirection.rtl,
+                      children: [
+                        const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'מאמת חיבור מול השרת…',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey.shade900,
+                            ),
+                            textDirection: TextDirection.rtl,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               if (isConnected && Platform.isAndroid) ...[
                 Card(
                   elevation: 2,

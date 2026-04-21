@@ -67,6 +67,9 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
     final existingId = await getLocalChildId();
     final childId = existingId ?? generateChildId();
     final name = [firstName, lastName].join(' ').trim();
+    String? attemptParentId;
+    String? attemptChildId;
+    String? attemptLinkCode;
     setState(() => _linking = true);
     try {
       await writeChildProfileToPendingLink(
@@ -89,6 +92,9 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
         if (mounted) setState(() => _linking = false);
         return;
       }
+      attemptParentId = parentId;
+      attemptChildId = childId;
+      attemptLinkCode = code;
       // Update the SAME child document the Child screen reads (genet_parents/{parentId}/children/{childId}).
       // This ensures connection state is written even if parent device did not run _onChildLinked yet.
       final childDocPath = 'genet_parents/$parentId/children/$childId';
@@ -108,6 +114,31 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
         linkCode: code,
       );
       developer.log('CHILD_DOC_AFTER_CONNECT = written (parentId + connectionStatus)', name: 'Sync');
+      final canonicalOk = await waitForCanonicalChildConnected(
+        parentId: parentId,
+        childId: childId,
+      );
+      if (!canonicalOk) {
+        developer.log(
+          'Manual code connection: canonical child doc not confirmed (timeout or invalid)',
+          name: 'Sync',
+        );
+        await reconcileFalseRemoteConnectedAfterIncompleteChildLink(
+          parentId: parentId,
+          childId: childId,
+          linkCode: code,
+        );
+        if (mounted) {
+          setState(() {
+            _linking = false;
+            _error = kDebugMode
+                ? 'Canonical link not confirmed (timeout). Try again.'
+                : 'החיבור לא אושר אצל ההורה. נסה שוב.';
+          });
+        }
+        return;
+      }
+      if (!mounted) return;
       await setLinkedParentId(parentId);
       await setLinkedChild(
         childId,
@@ -134,6 +165,15 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
         MaterialPageRoute(builder: (_) => const ChildHomeScreen()),
       );
     } catch (e) {
+      if (attemptParentId != null &&
+          attemptChildId != null &&
+          attemptLinkCode != null) {
+        await reconcileFalseRemoteConnectedAfterIncompleteChildLink(
+          parentId: attemptParentId,
+          childId: attemptChildId,
+          linkCode: attemptLinkCode,
+        );
+      }
       if (e is FirebaseException) {
         debugPrint('[GENET][LINK_CHILD][ERROR] code=${e.code} message=${e.message}');
       } else {

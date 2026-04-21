@@ -370,7 +370,7 @@ Stream<InstalledAppsInventory> listenToSelectedChildRelevantApps(String childId)
 // =============================================================================
 // === Parent connect write, connection status, blocked apps, VPN policy ===
 // =============================================================================
-/// Parent: create/update child doc in Firebase when child connects. Also write to local and child_link_status.
+/// Parent: merge-write the canonical child doc `genet_parents/{parentId}/children/{childId}` (connectionStatus, parentId, profile, linkCode, policy fields).
 Future<void> upsertParentChildDoc({
   required String parentId,
   required String childId,
@@ -415,8 +415,307 @@ bool isConnectionStatusConnected(String? status) {
   return status == _kConnected;
 }
 
+/// Waits until [genet_parents]/[parentId]/children/[childId] exists and shows a valid
+/// connected state for this exact parent/child pair (canonical link completion).
+///
+/// Ignores missing snapshots until [timeout] (transient race before first write).
+/// Returns false on timeout or empty [parentId]/[childId].
+Future<bool> waitForCanonicalChildConnected({
+  required String parentId,
+  required String childId,
+  Duration timeout = const Duration(seconds: 45),
+}) async {
+  final normParent = normalizeIdentifier(parentId);
+  final normChild = normalizeIdentifier(childId);
+  if (normParent == null || normChild == null) return false;
+
+  final ref = _childDocRef(normParent, normChild);
+  final completer = Completer<bool>();
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? sub;
+  var finished = false;
+
+  void complete(bool value) {
+    if (finished) return;
+    finished = true;
+    sub?.cancel();
+    if (!completer.isCompleted) {
+      completer.complete(value);
+    }
+  }
+
+  final timer = Timer(timeout, () => complete(false));
+
+  sub = ref.snapshots().listen(
+    (snap) {
+      if (!snap.exists || snap.data() == null) return;
+      final data = snap.data()!;
+      final docParent = normalizeIdentifier(data[_kParentId] as String?);
+      if (docParent == null || docParent != normParent) return;
+      final status = data[_kConnectionStatus] as String?;
+      if (!isConnectionStatusConnected(status)) return;
+      timer.cancel();
+      complete(true);
+    },
+    onError: (_) {
+      timer.cancel();
+      complete(false);
+    },
+  );
+
+  final result = await completer.future;
+  timer.cancel();
+  return result;
+}
+
+/// One-shot read of canonical child document data (`genet_parents/{parentId}/children/{childId}`).
+Future<Map<String, dynamic>?> readCanonicalChildData(
+  String parentId,
+  String childId,
+) async {
+  final p = normalizeIdentifier(parentId);
+  final c = normalizeIdentifier(childId);
+  if (p == null || c == null) return null;
+  final readHook = debugReadCanonicalChildDataForTests;
+  if (readHook != null) {
+    return readHook(p, c);
+  }
+  final snap = await _childDocRef(p, c).get();
+  if (!snap.exists || snap.data() == null) return null;
+  return snap.data();
+}
+
+/// Bounded server reads for startup preflight (transient null / offline).
+Future<Map<String, dynamic>?> readCanonicalChildDataWithBoundedRetry({
+  required String parentId,
+  required String childId,
+  required Duration timeout,
+}) async {
+  final p = normalizeIdentifier(parentId);
+  final c = normalizeIdentifier(childId);
+  if (p == null || c == null) return null;
+  final boundedHook = debugReadCanonicalChildDataWithBoundedRetryForTests;
+  if (boundedHook != null) {
+    return boundedHook(p, c, timeout);
+  }
+  final sw = Stopwatch()..start();
+  while (sw.elapsed < timeout) {
+    try {
+      final data = await readCanonicalChildData(p, c);
+      if (data != null) return data;
+    } catch (e, st) {
+      developer.log('readCanonicalChildDataWithBoundedRetry: $e $st', name: 'Sync');
+    }
+    final remaining = timeout - sw.elapsed;
+    if (remaining <= Duration.zero) break;
+    await Future<void>.delayed(
+      remaining < const Duration(milliseconds: 300)
+          ? remaining
+          : const Duration(milliseconds: 300),
+    );
+  }
+  return null;
+}
+
+/// Result of [preflightSavedChildCanonicalLink] for child-role routing (prefs are bootstrap only).
+enum SavedChildLinkPreflightResult {
+  /// Canonical doc exists and is connected for the saved parent id.
+  verifiedConnected,
+  /// Doc shows disconnected / wrong parent, or saved prefs pair is unusable.
+  verifiedInvalidOrStale,
+  /// Doc missing or unreadable within [timeout]; proceed to child home and rely on stream + stale reconcile.
+  unverifiedTransient,
+}
+
+// --- Test-only hooks (deterministic tests; always null in production) ---
+
+@visibleForTesting
+typedef DebugReadCanonicalChildDataTestHook = Future<Map<String, dynamic>?> Function(
+  String normalizedParentId,
+  String normalizedChildId,
+);
+
+@visibleForTesting
+DebugReadCanonicalChildDataTestHook? debugReadCanonicalChildDataForTests;
+
+@visibleForTesting
+typedef DebugReadCanonicalBoundedRetryTestHook = Future<Map<String, dynamic>?> Function(
+  String normalizedParentId,
+  String normalizedChildId,
+  Duration timeout,
+);
+
+@visibleForTesting
+DebugReadCanonicalBoundedRetryTestHook? debugReadCanonicalChildDataWithBoundedRetryForTests;
+
+@visibleForTesting
+typedef DebugSetChildConnectionStatusTestHook = Future<void> Function(
+  String parentId,
+  String childId,
+  String status,
+);
+
+@visibleForTesting
+DebugSetChildConnectionStatusTestHook? debugSetChildConnectionStatusFirebaseForTests;
+
+@visibleForTesting
+typedef DebugPreflightSavedChildResultHook = Future<SavedChildLinkPreflightResult> Function();
+
+@visibleForTesting
+DebugPreflightSavedChildResultHook? debugPreflightSavedChildCanonicalLinkResultForTests;
+
+/// Clears durable child link prefs; keeps [genet_local_child_id] and other identity keys.
+Future<void> clearChildLinkedPrefsKeepLocalIdentity() async {
+  await setLinkedChild(null, null);
+  await setLinkedParentId(null);
+}
+
+/// One bounded canonical check for saved `genet_linked_parent_id` + `genet_linked_child_id`.
+Future<SavedChildLinkPreflightResult> preflightSavedChildCanonicalLink({
+  Duration timeout = const Duration(seconds: 4),
+}) async {
+  final p = normalizeIdentifier(await getLinkedParentId());
+  final c = normalizeIdentifier(await getLinkedChildId());
+  if (p == null || c == null) {
+    return SavedChildLinkPreflightResult.verifiedInvalidOrStale;
+  }
+  final preflightQuick = debugPreflightSavedChildCanonicalLinkResultForTests;
+  if (preflightQuick != null) {
+    return preflightQuick();
+  }
+  Map<String, dynamic>? data;
+  try {
+    data = await readCanonicalChildDataWithBoundedRetry(
+      parentId: p,
+      childId: c,
+      timeout: timeout,
+    );
+  } catch (e, st) {
+    developer.log('preflightSavedChildCanonicalLink: unexpected $e $st', name: 'Sync');
+    return SavedChildLinkPreflightResult.unverifiedTransient;
+  }
+  if (data == null) {
+    developer.log(
+      'preflightSavedChildCanonicalLink: unverified (no doc within ${timeout.inMilliseconds}ms) parent=$p child=$c',
+      name: 'Sync',
+    );
+    return SavedChildLinkPreflightResult.unverifiedTransient;
+  }
+  if (!canonicalChildDataActiveForParent(data, p)) {
+    developer.log(
+      'preflightSavedChildCanonicalLink: invalid/stale canonical for saved prefs parent=$p child=$c',
+      name: 'Sync',
+    );
+    return SavedChildLinkPreflightResult.verifiedInvalidOrStale;
+  }
+  developer.log('preflightSavedChildCanonicalLink: verified connected parent=$p child=$c', name: 'Sync');
+  return SavedChildLinkPreflightResult.verifiedConnected;
+}
+
+/// Whether raw canonical child document map indicates an active link for [expectedParentId].
+bool canonicalChildDataActiveForParent(
+  Map<String, dynamic> data,
+  String expectedParentId,
+) {
+  final exp = normalizeIdentifier(expectedParentId);
+  final docPid = normalizeIdentifier(data[_kParentId] as String?);
+  if (exp == null || docPid == null || docPid != exp) return false;
+  final status = data[_kConnectionStatus] as String? ?? _kConnected;
+  return isConnectionStatusConnected(status);
+}
+
+/// True when this device has committed durable child linked prefs for the given pair.
+Future<bool> childDeviceDurablyLinkedToParent(String parentId, String childId) async {
+  final expP = normalizeIdentifier(parentId);
+  final expC = normalizeIdentifier(childId);
+  if (expP == null || expC == null) return false;
+  final lp = normalizeIdentifier(await getLinkedParentId());
+  final lc = normalizeIdentifier(await getLinkedChildId());
+  return lp == expP && lc == expC;
+}
+
+/// After a **child-device** link attempt wrote [upsertParentChildDoc] but never finished local
+/// linked prefs (`genet_linked_parent_id` + `genet_linked_child_id` for this pair): if the
+/// canonical doc is still connected for [parentId]/[childId] with the same [linkCode] as this
+/// attempt, mark it disconnected so retries and parent views are not blocked by a false-remote
+/// "connected" state.
+///
+/// Safe for healthy devices: if prefs already show a completed link for this pair, no-op.
+/// Safe for later retries: if Firestore [linkCode] no longer matches this attempt, no-op.
+/// Idempotent: repeated calls on an already disconnected doc are harmless (may re-touch fields).
+Future<void> reconcileFalseRemoteConnectedAfterIncompleteChildLink({
+  required String parentId,
+  required String childId,
+  required String linkCode,
+}) async {
+  final p = normalizeIdentifier(parentId);
+  final c = normalizeIdentifier(childId);
+  final code = normalizeIdentifier(linkCode);
+  if (p == null || c == null || code == null) return;
+
+  if (await childDeviceDurablyLinkedToParent(parentId, childId)) {
+    developer.log(
+      'INCOMPLETE_LINK_RECONCILE skip: child already durably linked locally parent=$p child=$c',
+      name: 'Sync',
+    );
+    return;
+  }
+
+  var data = await readCanonicalChildData(p, c);
+  if (data == null || !canonicalChildDataActiveForParent(data, p)) {
+    developer.log(
+      'INCOMPLETE_LINK_RECONCILE skip: canonical missing or not connected parent=$p child=$c',
+      name: 'Sync',
+    );
+    return;
+  }
+  if (normalizeIdentifier(data[_kLinkCode] as String?) != code) {
+    developer.log(
+      'INCOMPLETE_LINK_RECONCILE skip: linkCode mismatch (likely newer attempt) parent=$p child=$c',
+      name: 'Sync',
+    );
+    return;
+  }
+
+  if (await childDeviceDurablyLinkedToParent(parentId, childId)) {
+    developer.log(
+      'INCOMPLETE_LINK_RECONCILE skip: linked prefs appeared before disconnect parent=$p child=$c',
+      name: 'Sync',
+    );
+    return;
+  }
+
+  data = await readCanonicalChildData(p, c);
+  if (data == null ||
+      !canonicalChildDataActiveForParent(data, p) ||
+      normalizeIdentifier(data[_kLinkCode] as String?) != code) {
+    developer.log(
+      'INCOMPLETE_LINK_RECONCILE skip: canonical changed before disconnect parent=$p child=$c',
+      name: 'Sync',
+    );
+    return;
+  }
+
+  try {
+    await setChildConnectionStatusFirebase(p, c, _kDisconnected);
+    developer.log(
+      'INCOMPLETE_LINK_RECONCILE applied: canonical marked disconnected parent=$p child=$c code=$code',
+      name: 'Sync',
+    );
+  } catch (e, st) {
+    developer.log(
+      'INCOMPLETE_LINK_RECONCILE failed: parent=$p child=$c error=$e $st',
+      name: 'Sync',
+    );
+  }
+}
+
 /// Parent: set child connection status to disconnected (when parent removes child).
 Future<void> setChildConnectionStatusFirebase(String parentId, String childId, String status) async {
+  final disconnectHook = debugSetChildConnectionStatusFirebaseForTests;
+  if (disconnectHook != null) {
+    await disconnectHook(parentId, childId, status);
+    return;
+  }
   final ref = _childDocRef(parentId, childId);
   final updates = <String, dynamic>{
     _kConnectionStatus: status,
