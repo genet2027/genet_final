@@ -177,44 +177,49 @@ class _NightModeSettingsScreenState extends State<NightModeSettingsScreen> {
                         fontSize: 16,
                         color: AppTheme.darkBlue)),
                 const SizedBox(height: 8),
-                ...NightBehaviorLevel.values.map((level) {
-                  String subtitle;
-                  switch (level) {
-                    case NightBehaviorLevel.disruptive:
-                      subtitle = '0 בקשות בלילה';
-                      break;
-                    case NightBehaviorLevel.good:
-                      subtitle = 'בקשה אחת בלילה';
-                      break;
-                    case NightBehaviorLevel.excellent:
-                      subtitle = 'עד $_excellentMax בקשות (ניתן להגדרה)';
-                      break;
-                  }
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Material(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      elevation: 2,
-                      shadowColor: Colors.black.withValues(alpha: 0.08),
-                      child: RadioListTile<NightBehaviorLevel>(
-                        value: level,
-                        groupValue: _behaviorLevel,
-                        onChanged: (v) {
-                          if (v != null) setState(() => _behaviorLevel = v);
-                        },
-                        title: Text(_behaviorLabel(level)),
-                        subtitle: Text(subtitle,
-                            style: TextStyle(
-                                color: Colors.grey.shade600, fontSize: 13)),
-                        activeColor: AppTheme.primaryBlue,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
+                RadioGroup<NightBehaviorLevel>(
+                  groupValue: _behaviorLevel,
+                  onChanged: (NightBehaviorLevel? v) {
+                    if (v != null) setState(() => _behaviorLevel = v);
+                  },
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final level in NightBehaviorLevel.values)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Material(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            elevation: 2,
+                            shadowColor:
+                                Colors.black.withValues(alpha: 0.08),
+                            child: RadioListTile<NightBehaviorLevel>(
+                              value: level,
+                              title: Text(_behaviorLabel(level)),
+                              subtitle: Text(
+                                switch (level) {
+                                  NightBehaviorLevel.disruptive =>
+                                    '0 בקשות בלילה',
+                                  NightBehaviorLevel.good => 'בקשה אחת בלילה',
+                                  NightBehaviorLevel.excellent =>
+                                    'עד $_excellentMax בקשות (ניתן להגדרה)',
+                                },
+                                style: TextStyle(
+                                  color: Colors.grey.shade600,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              activeColor: AppTheme.primaryBlue,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-                  );
-                }),
+                    ],
+                  ),
+                ),
                 if (_behaviorLevel == NightBehaviorLevel.excellent) ...[
                   const SizedBox(height: 16),
                   const Text('מספר בקשות מקסימלי (מצוין)',
