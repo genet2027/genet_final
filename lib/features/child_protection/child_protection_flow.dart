@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../behavior/enums/behavior_event_type.dart';
+import '../blocked_apps/blocked_package_matching.dart';
 import '../../repositories/parent_child_sync_repository.dart';
 import 'child_protection_models.dart';
 
@@ -80,8 +81,7 @@ class ChildProtectionFlow {
       state = ChildProtectionState.timeTampered;
     } else if (i.sleepLockActive) {
       state = ChildProtectionState.sleepLock;
-    } else if (normalizedForegroundApp != null &&
-        sortedBlockedApps.contains(normalizedForegroundApp)) {
+    } else if (isPackageBlockedByRawList(ctx.currentForegroundApp, i.blockedApps)) {
       state = ChildProtectionState.appBlocked;
     } else if (i.requireNetworkProtectionScreen && i.networkProtectionRelevant) {
       state = ChildProtectionState.vpnRequired;

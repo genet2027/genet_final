@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/extension_requests.dart';
-import '../core/user_role.dart';
+import '../features/blocked_apps/blocked_package_matching.dart';
 import '../models/installed_app.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
@@ -53,9 +53,7 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
     getLinkedParentId().then((parentId) {
       getLinkedChildId().then((childId) {
         if (parentId != null && childId != null && mounted) {
-          _syncSub = watchSyncedChildDataStream(parentId, childId).listen((data) async {
-            final role = await getUserRole();
-            print('ROLE: $role');
+          _syncSub = watchSyncedChildDataStream(parentId, childId).listen((data) {
             if (data != null && mounted) {
               setState(() {
                 _blockedPackages = data.blockedPackages;
@@ -113,15 +111,19 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
 
   List<InstalledApp> get _blockedAppsWithNames {
     return _installedApps.where((app) {
-      return _blockedPackages.contains(app.packageName);
+      return isPackageBlockedByRawList(app.packageName, _blockedPackages);
     }).toList();
   }
 
   String _requestStatusForPackage(String packageName) {
-    final untilMs = _approvedUntil[packageName];
+    final untilMs = maxApprovedUntilMsForPackage(packageName, _approvedUntil);
     final now = DateTime.now().millisecondsSinceEpoch;
-    if (untilMs != null && untilMs > now) return 'אושר זמנית';
-    final r = _requests.where((e) => e.packageName == packageName).toList();
+    if (untilMs > now) return 'אושר זמנית';
+    final group = fixedCatalogAliasGroupForPackage(packageName);
+    final r = _requests.where((e) {
+      final ep = normalizeBlockedPackageId(e.packageName);
+      return ep != null && group.contains(ep);
+    }).toList();
     if (r.isEmpty) return '';
     final last = r.last;
     if (last.status == ExtensionRequestStatus.pending) return 'ממתין לאישור';
@@ -130,8 +132,8 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
   }
 
   int? _remainingSeconds(String packageName) {
-    final untilMs = _approvedUntil[packageName];
-    if (untilMs == null) return null;
+    final untilMs = maxApprovedUntilMsForPackage(packageName, _approvedUntil);
+    if (untilMs <= 0) return null;
     final now = DateTime.now().millisecondsSinceEpoch;
     if (untilMs <= now) return null;
     return ((untilMs - now) / 1000).floor();

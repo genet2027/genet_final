@@ -59,6 +59,7 @@ class MainActivity : FlutterActivity() {
                 "setBlockedApps" -> {
                     @Suppress("UNCHECKED_CAST")
                     val list = call.argument<List<String>>("packages") ?: emptyList()
+                    Log.d("GenetVpn", "VPN_CHANNEL setBlockedApps: full replace count=${list.size} empty=${list.isEmpty()}")
                     applyVpnBlockedList(list)
                     result.success(null)
                 }
@@ -134,7 +135,10 @@ class MainActivity : FlutterActivity() {
                 "setBlockedApps", "setBlockedPackages" -> {
                     val list = call.argument<List<String>>("packages") ?: emptyList()
                     val filtered = list.filter { it != packageName }
-                    android.util.Log.d("GENET", "setBlockedPackages received size=${filtered.size}")
+                    android.util.Log.d(
+                        "GENET",
+                        "CONFIG_CHANNEL setBlockedPackages: full prefs replace size=${filtered.size} empty=${filtered.isEmpty()}",
+                    )
                     getGenetPrefs().edit().putString(GenetAccessibilityService.KEY_BLOCKED_APPS, JSONArray(filtered).toString()).apply()
                     GenetAccessibilityService.updateBlockedPackages(filtered)
                     sendBroadcast(android.content.Intent(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
@@ -333,11 +337,12 @@ class MainActivity : FlutterActivity() {
 
     private fun getGenetPrefs() = getSharedPreferences(GenetAccessibilityService.PREFS_NAME, MODE_PRIVATE)
 
-    /** Updates VPN block list; empty list stops the VPN service if it is running. */
+    /** Updates VPN block list; empty list overwrites in-memory set and stops VPN if running. */
     private fun applyVpnBlockedList(list: List<String>) {
+        Log.d("GenetVpn", "applyVpnBlockedList: replacing NetworkBlocker set count=${list.size} empty=${list.isEmpty()}")
         NetworkBlocker.setBlockedApps(list)
         if (list.isEmpty() && VpnState.isVpnRunning) {
-            Log.i("GenetVpn", "No blocked apps, skipping VPN")
+            Log.i("GenetVpn", "applyVpnBlockedList: empty list -> stopping VPN service")
             startService(Intent(this, GenetVpnService::class.java).setAction(GenetVpnService.ACTION_STOP))
         }
     }

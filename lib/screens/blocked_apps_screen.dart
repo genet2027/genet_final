@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../core/config/genet_config.dart';
 import '../core/user_role.dart';
 import '../core/extension_requests.dart';
+import '../features/blocked_apps/blocked_package_matching.dart';
 import '../features/blocked_apps/fixed_blockable_apps_catalog.dart';
 import '../models/child_entity.dart';
 import '../models/installed_app.dart';
@@ -569,10 +570,13 @@ class _BlockedAppsScreenState extends State<BlockedAppsScreen> {
     if (_selectedChildId == null || _selectedChildId!.isEmpty) return;
     final genetPkg = await GenetConfig.getPackageName();
     if (genetPkg.isNotEmpty && packageName == genetPkg) return;
-    if (_blockedPackages.contains(packageName)) {
-      _blockedPackages.remove(packageName);
+    final n = normalizeBlockedPackageId(packageName);
+    if (n == null) return;
+    if (isPackageBlockedByRawList(n, _blockedPackages)) {
+      final group = fixedCatalogAliasGroupForPackage(n);
+      _blockedPackages.removeWhere(group.contains);
     } else {
-      _blockedPackages.add(packageName);
+      _blockedPackages.add(n);
     }
     _maybeBumpApps();
     await _saveBlocked();

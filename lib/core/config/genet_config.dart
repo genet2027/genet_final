@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../features/blocked_apps/blocked_package_matching.dart';
 import '../../repositories/children_repository.dart';
 import '../../services/installed_apps_bridge.dart';
 import '../user_role.dart';
@@ -70,8 +71,18 @@ class GenetConfig {
             ? _decodeExtensionApproved(raw) ?? {}
             : {};
       }
+      final expanded = effectiveBlockedPackageIds(blocked);
       final effective =
           VpnRemoteChildPolicy.effectiveBlockedFromLists(blocked, extensionApproved);
+      debugPrint(
+        '[GenetConfig] nativePush path=GenetConfig.syncToNative channel=com.example.genet_final/config '
+        'rawBlocked=$blocked expandedCatalog=$expanded effectiveNative=$effective',
+      );
+      if (effective.isEmpty) {
+        debugPrint(
+          '[GenetConfig] nativePush syncToNative: effectiveNative is empty -> overwriting native blocked list with []',
+        );
+      }
       await setBlockedApps(effective);
       await setExtensionApproved(extensionApproved);
 
@@ -147,6 +158,10 @@ class GenetConfig {
 
   static Future<void> setBlockedApps(List<String> packageNames) async {
     if (!Platform.isAndroid) return;
+    debugPrint(
+      '[GenetConfig] setBlockedApps channel=com.example.genet_final/config count=${packageNames.length} '
+      'empty=${packageNames.isEmpty}',
+    );
     try {
       await _channel.invokeMethod('setBlockedApps', {'packages': packageNames});
     } on PlatformException catch (_) {}

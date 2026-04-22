@@ -6,8 +6,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/config/genet_config.dart';
 import '../core/genet_vpn.dart';
+import '../core/vpn_remote_child.dart';
 import '../core/pin_storage.dart';
 import '../core/user_role.dart';
+import '../features/blocked_apps/blocked_package_matching.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
@@ -285,8 +287,21 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       return;
     }
     final blocked = await _blockedPackagesForVpn();
-    debugPrint('[GenetVpn] startVpn after PIN: setBlockedApps count=${blocked.length} $blocked');
-    await GenetVpn.setBlockedApps(blocked);
+    final linkedForExt = await getLinkedChildId();
+    final ext = (linkedForExt != null && linkedForExt.isNotEmpty)
+        ? await getExtensionApprovedForChild(linkedForExt)
+        : <String, int>{};
+    final expanded = effectiveBlockedPackageIds(blocked);
+    final effective = VpnRemoteChildPolicy.effectiveBlockedFromLists(
+      blocked,
+      ext,
+      currentTimeMs: DateTime.now().millisecondsSinceEpoch,
+    );
+    debugPrint(
+      '[GenetVpn] nativePush path=settings_screen child role channel=genet/vpn '
+      'rawBlocked=$blocked expandedCatalog=$expanded effectiveNative=$effective',
+    );
+    await GenetVpn.setBlockedApps(effective);
     final r = await GenetVpn.startVpn();
     debugPrint('[GenetVpn] startVpn native result=$r');
     if (!mounted) return;
@@ -300,7 +315,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
         );
         return;
       }
-      if (r?['started'] != true && blocked.isEmpty) {
+      if (r?['started'] != true && effective.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('אין אפליקציות חסומות להפעלת חסימת רשת.')),
         );

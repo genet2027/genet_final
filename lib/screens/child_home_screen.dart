@@ -922,6 +922,10 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     if (!mounted) return;
     setState(() {});
     _syncNightNativeOnly();
+    if (!mounted) return;
+    // One extra pass via [scheduleBlockingStateSync]; avoids waiting only on the 10s timer
+    // after remote sleep config changes (bounded, no loops or new timers).
+    _syncBlockingState();
   }
 
   /// Sleep / night lock is enforced only by Android (Accessibility overlay), never via in-app [Navigator] routes.
@@ -1038,6 +1042,9 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
             _syncBlockingState();
           }
         }
+        // Policy cache for [handleSleepLockState] when called without `data` (e.g. timer path).
+        // Must be set before native snapshot read: snap==null used to return without ever assigning.
+        _lastSyncedForVpn = data;
         final vpnDot = await handleSleepLockState(data: data);
         final snap = await _readNativeVpnSnapshotForSyncedPolicy(data);
         if (snap == null || !mounted) return;
@@ -1050,7 +1057,6 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
         );
         if (uiFp == _lastChildHomeUiFingerprint) {
           debugPrint('[GenetVpn] skipped duplicate setState');
-          _lastSyncedForVpn = data;
           return;
         }
         _lastChildHomeUiFingerprint = uiFp;
@@ -1060,7 +1066,6 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
         setState(() {
           _firebaseConnectionStatus = true;
           _linkedNameForDisplay = name;
-          _lastSyncedForVpn = data;
         });
         _applyVpnProtectionSnapshot(
           protectionStatus: snap.protectionStatus,

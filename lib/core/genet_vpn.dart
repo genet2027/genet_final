@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 /// Native VPN blackhole (Android): [MethodChannel] `genet/vpn`.
@@ -16,8 +17,14 @@ class GenetVpn {
   static Future<Map<String, dynamic>?>? _inFlightStartVpn;
 
   /// Updates the in-memory blocked list used when establishing / restarting the VPN session.
+  /// Prefer lists from [VpnRemoteChildPolicy.effectiveBlockedFromLists] / [VpnRemoteChildPolicy.effectiveBlockedPackages]
+  /// (catalog expansion + extension) so native matches Parent/Child UI / ChildProtection.
   static Future<void> setBlockedApps(List<String> packageNames) async {
     if (!Platform.isAndroid) return;
+    debugPrint(
+      '[GenetVpn] setBlockedApps channel=genet/vpn count=${packageNames.length} '
+      'empty=${packageNames.isEmpty}',
+    );
     try {
       await _channel.invokeMethod<void>('setBlockedApps', {
         'packages': packageNames,

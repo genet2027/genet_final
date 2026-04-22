@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:genet_final/core/user_role.dart';
 import 'package:genet_final/features/behavior/enums/behavior_event_type.dart';
 import 'package:genet_final/features/child_protection/child_protection_flow.dart';
 import 'package:genet_final/features/child_protection/child_protection_models.dart';
@@ -203,6 +204,60 @@ void main() {
       flow.apply(ChildProtectionState.free, b);
       flow.apply(ChildProtectionState.free, b);
       expect(clears, 2);
+    });
+  });
+
+  group('ChildProtectionFlow.scheduleBlockingStateSync', () {
+    test('runs sleep policy then night native sync once', () async {
+      var sleepRuns = 0;
+      var nightRuns = 0;
+      final flow = ChildProtectionFlow(logCritical: _noopLog);
+      flow.scheduleBlockingStateSync(
+        mounted: () => true,
+        getUserRole: () async => kUserRoleChild,
+        expectedChildRole: kUserRoleChild,
+        runSleepLockPolicy: ({data}) async {
+          sleepRuns++;
+        },
+        syncNightNativeOnly: () {
+          nightRuns++;
+        },
+      );
+      await pumpEventQueue();
+      expect(sleepRuns, 1);
+      expect(nightRuns, 1);
+    });
+
+    test('skips when not mounted', () async {
+      var sleepRuns = 0;
+      final flow = ChildProtectionFlow(logCritical: _noopLog);
+      flow.scheduleBlockingStateSync(
+        mounted: () => false,
+        getUserRole: () async => kUserRoleChild,
+        expectedChildRole: kUserRoleChild,
+        runSleepLockPolicy: ({data}) async {
+          sleepRuns++;
+        },
+        syncNightNativeOnly: () {},
+      );
+      await pumpEventQueue();
+      expect(sleepRuns, 0);
+    });
+
+    test('skips when role does not match expected child', () async {
+      var sleepRuns = 0;
+      final flow = ChildProtectionFlow(logCritical: _noopLog);
+      flow.scheduleBlockingStateSync(
+        mounted: () => true,
+        getUserRole: () async => kUserRoleParent,
+        expectedChildRole: kUserRoleChild,
+        runSleepLockPolicy: ({data}) async {
+          sleepRuns++;
+        },
+        syncNightNativeOnly: () {},
+      );
+      await pumpEventQueue();
+      expect(sleepRuns, 0);
     });
   });
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../../models/installed_app.dart';
+import 'blocked_package_matching.dart';
 
 /// Parent blocked-apps UI: always show these apps; match child inventory by package.
 class FixedBlockableAppDef {
@@ -36,6 +37,7 @@ class FixedBlockableAppDef {
 }
 
 /// Order: YouTube, Facebook, Instagram.
+/// SYNC: [blocked_package_matching._kFixedCatalogPackageFamilies] must use the same package sets.
 const List<FixedBlockableAppDef> kFixedBlockableApps = [
   FixedBlockableAppDef(
     id: 'youtube',
@@ -85,11 +87,10 @@ class ParentBlockedAppListRow {
   final bool allowRemoveFromList;
   final String stableListKey;
 
+  /// Delegates to [effectiveBlockedPackageIds] (same path as child UI + ChildProtection).
   bool isBlocked(List<String> blockedPackages) {
-    if (isFixedCatalog) {
-      return matchPackages.any(blockedPackages.contains);
-    }
-    return blockedPackages.contains(blockPackageName);
+    final eff = effectiveBlockedPackageIds(blockedPackages);
+    return matchPackages.any(eff.contains);
   }
 }
 

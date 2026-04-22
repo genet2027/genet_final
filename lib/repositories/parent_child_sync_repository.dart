@@ -774,7 +774,7 @@ Future<void> syncVpnPolicyToFirebase(String parentId, String childId, {required 
         name: 'GenetVpn',
       );
       debugPrint('[GenetVpn] parent wrote vpnEnabled=true');
-      debugPrint('[GenetVpn] writing blockedApps=$pkgs');
+      debugPrint('[GenetVpn] writing blockedPackages=$pkgs');
       await _childDocRef(parentId, childId).set({
         _kBlockedPackages: pkgs,
         _kVpnEnabled: true,

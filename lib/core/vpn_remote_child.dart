@@ -2,14 +2,16 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../features/blocked_apps/blocked_package_matching.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import 'genet_vpn.dart';
 import 'user_role.dart';
 
 /// Applies remote VPN policy on the child device only (Firestore → local VPN).
-/// Uses [SyncedChildData.blockedPackages] minus packages with active extension
-/// ([SyncedChildData.extensionApproved][pkg] > now) as the effective block list for the VPN.
+/// Effective native list = [effectiveBlockedPackageIds] (fixed-catalog aliases) minus
+/// active temporary approvals ([maxApprovedUntilMsForPackage] per package).
+/// Pushed to native via [GenetVpn.setBlockedApps] (MethodChannel `genet/vpn`).
 class VpnRemoteChildPolicy {
   VpnRemoteChildPolicy._();
 
@@ -30,7 +32,8 @@ class VpnRemoteChildPolicy {
     _lastPushedMsg = null;
   }
 
-  /// Effective packages to pass to native VPN: blocked list minus active temporary approvals.
+  /// Effective packages for native VPN: fixed-catalog expansion + extension family windows
+  /// (see [effectiveBlockedFromLists]).
   static List<String> effectiveBlockedPackages(
     SyncedChildData data, {
     int? currentTimeMs,
@@ -42,22 +45,22 @@ class VpnRemoteChildPolicy {
     );
   }
 
-  /// Same rule as [effectiveBlockedPackages] for prefs-only sync (e.g. [GenetConfig.syncToNative]).
+  /// Same rule as [effectiveBlockedPackages]: catalog expansion + extension family window.
+  /// Used by [GenetConfig.syncToNative] (Accessibility prefs path, `com.example.genet_final/config`).
   static List<String> effectiveBlockedFromLists(
     List<String> rawBlocked,
-    Map<String, int> extensionApproved,
-    {
+    Map<String, int> extensionApproved, {
     int? currentTimeMs,
   }) {
     final now = currentTimeMs ?? DateTime.now().millisecondsSinceEpoch;
+    final expanded = effectiveBlockedPackageIds(rawBlocked);
     final out = <String>[];
-    for (final pkg in rawBlocked) {
-      final until = extensionApproved[pkg] ?? 0;
-      if (until > now) {
-        continue;
+    for (final pkg in expanded) {
+      if (maxApprovedUntilMsForPackage(pkg, extensionApproved) <= now) {
+        out.add(pkg);
       }
-      out.add(pkg);
     }
+    out.sort();
     return out;
   }
 
@@ -80,10 +83,16 @@ class VpnRemoteChildPolicy {
 
     final vpnEnabled = overrideVpnEnabled ?? data.vpnEnabled;
     final rawBlocked = data.blockedPackages;
+    final expandedCatalog = effectiveBlockedPackageIds(rawBlocked);
     final effective =
         effectiveBlockedPackages(data, currentTimeMs: currentTimeMs);
     final effSorted = List<String>.from(effective)..sort();
-    final effKey = '$vpnEnabled|${effSorted.join(',')}';
+    final rawKeyParts = List<String>.from(
+      rawBlocked.map((s) => s.trim()).where((s) => s.isNotEmpty),
+    )..sort();
+    // Include raw in dedupe key so parent UNBLOCK (raw shrinks / clears) always re-pushes even when
+    // effective stayed identical (e.g. empty both times, or same after expansion).
+    final effKey = '$vpnEnabled|eff:${effSorted.join(',')}|raw:${rawKeyParts.join(',')}';
 
     if (effKey == _lastNativeEffectiveKey) {
       return _lastReturnedApplyStatus;
@@ -98,31 +107,41 @@ class VpnRemoteChildPolicy {
     final now = currentTimeMs ?? DateTime.now().millisecondsSinceEpoch;
     final newEffSet = effective.toSet();
     final prev = _lastEffectiveBlockedSet;
-    for (final pkg in rawBlocked) {
-      final until = data.extensionApproved[pkg] ?? 0;
+    debugPrint(
+      '[GenetVpn] nativePush path=VpnRemoteChildPolicy.apply channel=genet/vpn '
+      'rawBlocked=$rawBlocked expandedCatalog=$expandedCatalog effectiveNative=$effective '
+      'prevNativeEffective=${(prev.toList()..sort()).join(',')}',
+    );
+    if (prev.isNotEmpty && (newEffSet.length < prev.length || newEffSet.isEmpty)) {
+      debugPrint(
+        '[GenetVpn] unblock-shrink after parent change: prevCount=${prev.length} newCount=${newEffSet.length} '
+        'rawAfter=$rawKeyParts effAfter=$effSorted',
+      );
+    }
+    for (final pkg in expandedCatalog) {
+      final until = maxApprovedUntilMsForPackage(pkg, data.extensionApproved);
       if (until > now) {
         debugPrint(
-          '[GenetVpn] extension approved for package=$pkg expiresAt=${DateTime.fromMillisecondsSinceEpoch(until).toIso8601String()}',
+          '[GenetVpn] extension window active package=$pkg expiresAt=${DateTime.fromMillisecondsSinceEpoch(until).toIso8601String()}',
         );
       }
     }
     for (final p in prev.difference(newEffSet)) {
-      if (!rawBlocked.contains(p)) continue;
-      final until = data.extensionApproved[p] ?? 0;
+      if (!expandedCatalog.contains(p)) continue;
+      final until = maxApprovedUntilMsForPackage(p, data.extensionApproved);
       if (until > now) {
         debugPrint(
-          '[GenetVpn] temporary unblock applied for package=$p expiresAt=${DateTime.fromMillisecondsSinceEpoch(until).toIso8601String()}',
+          '[GenetVpn] temporary unblock applied package=$p expiresAt=${DateTime.fromMillisecondsSinceEpoch(until).toIso8601String()}',
         );
       }
     }
     var extensionJustExpired = false;
     if (prev.isNotEmpty) {
       for (final p in newEffSet.difference(prev)) {
-        if (rawBlocked.contains(p)) {
-          extensionJustExpired = true;
-          debugPrint('[GenetVpn] extension expired for package=$p');
-          debugPrint('[GenetVpn] package re-blocked: $p');
-        }
+        // Firestore raw list only: avoids treating first-time catalog expansion as extension expiry.
+        if (!rawBlocked.contains(p)) continue;
+        extensionJustExpired = true;
+        debugPrint('[GenetVpn] extension expired for package=$p (re-entered effective native set)');
       }
     }
     _lastEffectiveBlockedSet = Set<String>.from(newEffSet);
@@ -137,10 +156,10 @@ class VpnRemoteChildPolicy {
       await syncChildVpnStatusToFirebase(pid, cid, status, vpnStatusMessage: msg);
     }
 
-    debugPrint('[GenetVpn] child raw blockedApps: $rawBlocked');
-    debugPrint('[GenetVpn] child effective blockedApps for VPN: $effective');
-
     await GenetVpn.setBlockedApps(effective);
+    if (effective.isEmpty) {
+      debugPrint('[GenetVpn] nativePush apply: sent empty effectiveNative to genet/vpn (clear VPN block list)');
+    }
 
     if (!vpnEnabled) {
       debugPrint('[GenetVpn] applying stopVpn now');

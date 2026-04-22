@@ -28,7 +28,7 @@ object NetworkBlocker {
 
     fun setBlockedApps(packages: List<String>) {
         blockedApps = packages.filter { it != GENET_PACKAGE }.toSet()
-        Log.d(TAG, "setBlockedApps count=${blockedApps.size} (Genet self excluded)")
+        Log.d(TAG, "setBlockedApps: full replace count=${blockedApps.size} empty=${blockedApps.isEmpty()} (Genet self excluded)")
     }
 
     fun getBlockedApps(): Set<String> = blockedApps
