@@ -1,6 +1,10 @@
+import 'dart:developer' as developer;
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../repositories/children_repository.dart';
+import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
 
 const String _kSleepLockEnabledKey = 'genet_sleep_lock_enabled';
@@ -28,38 +32,76 @@ class _SleepLockScreenState extends State<SleepLockScreen> {
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _enabled = prefs.getBool(_kSleepLockEnabledKey) ?? false;
-      final startStr = prefs.getString(_kSleepLockStartKey);
-      final endStr = prefs.getString(_kSleepLockEndKey);
-      if (startStr != null) {
-        final parts = startStr.split(':');
-        _startTime = TimeOfDay(
-          hour: int.parse(parts[0]),
-          minute: int.parse(parts[1]),
+    _enabled = prefs.getBool(_kSleepLockEnabledKey) ?? false;
+    final startStr = prefs.getString(_kSleepLockStartKey);
+    final endStr = prefs.getString(_kSleepLockEndKey);
+    if (startStr != null) {
+      final parts = startStr.split(':');
+      _startTime = TimeOfDay(
+        hour: int.parse(parts[0]),
+        minute: int.parse(parts[1]),
+      );
+    }
+    if (endStr != null) {
+      final parts = endStr.split(':');
+      _endTime = TimeOfDay(
+        hour: int.parse(parts[0]),
+        minute: int.parse(parts[1]),
+      );
+    }
+    final selectedId = await getSelectedChildId();
+    if (selectedId != null && selectedId.isNotEmpty) {
+      final remote = await getSleepLockFromFirebase(selectedId);
+      if (remote != null && mounted) {
+        developer.log(
+          'SLEEP_LOCK parent load merged from Firebase childId=$selectedId isActive=${remote['isActive']} start=${remote['startTime']} end=${remote['endTime']}',
+          name: 'Sync',
         );
+        final rs = remote['startTime'] as String?;
+        final re = remote['endTime'] as String?;
+        if (remote['isActive'] is bool) {
+          _enabled = remote['isActive'] as bool;
+        }
+        if (rs != null && rs.contains(':')) {
+          final p = rs.split(':');
+          _startTime = TimeOfDay(hour: int.parse(p[0]), minute: int.parse(p[1]));
+        }
+        if (re != null && re.contains(':')) {
+          final p = re.split(':');
+          _endTime = TimeOfDay(hour: int.parse(p[0]), minute: int.parse(p[1]));
+        }
+        await prefs.setBool(_kSleepLockEnabledKey, _enabled);
+        await prefs.setString(_kSleepLockStartKey, _formatTime(_startTime));
+        await prefs.setString(_kSleepLockEndKey, _formatTime(_endTime));
       }
-      if (endStr != null) {
-        final parts = endStr.split(':');
-        _endTime = TimeOfDay(
-          hour: int.parse(parts[0]),
-          minute: int.parse(parts[1]),
-        );
-      }
-    });
+    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _saveSettings() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kSleepLockEnabledKey, _enabled);
-    await prefs.setString(
-      _kSleepLockStartKey,
-      '${_startTime.hour.toString().padLeft(2, '0')}:${_startTime.minute.toString().padLeft(2, '0')}',
-    );
-    await prefs.setString(
-      _kSleepLockEndKey,
-      '${_endTime.hour.toString().padLeft(2, '0')}:${_endTime.minute.toString().padLeft(2, '0')}',
-    );
+    final startS =
+        '${_startTime.hour.toString().padLeft(2, '0')}:${_startTime.minute.toString().padLeft(2, '0')}';
+    final endS =
+        '${_endTime.hour.toString().padLeft(2, '0')}:${_endTime.minute.toString().padLeft(2, '0')}';
+    await prefs.setString(_kSleepLockStartKey, startS);
+    await prefs.setString(_kSleepLockEndKey, endS);
+    final selectedId = await getSelectedChildId();
+    if (selectedId != null && selectedId.isNotEmpty) {
+      developer.log(
+        'SLEEP_LOCK parent write selectedChildId=$selectedId path=child_settings/$selectedId/sleep_lock/settings',
+        name: 'Sync',
+      );
+      await writeSleepLockToFirebase(
+        selectedId,
+        isActive: _enabled,
+        startTime: startS,
+        endTime: endS,
+      );
+    } else {
+      developer.log('SLEEP_LOCK parent write skipped: no selectedChildId', name: 'Sync');
+    }
   }
 
   String _formatTime(TimeOfDay t) {

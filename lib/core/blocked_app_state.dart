@@ -1,3 +1,4 @@
+import '../features/blocked_apps/blocked_package_matching.dart';
 import 'extension_requests.dart';
 
 /// מקור אמת נגזר לכל אפליקציה חסומה: מצב חסימה, הארכה, הרשאות ו־recovery.
@@ -30,10 +31,10 @@ class BlockedAppState {
     required List<ExtensionRequest> extensionRequests,
   }) {
     final now = DateTime.now().millisecondsSinceEpoch;
-    final isBlocked = blockedPackages.contains(packageName);
-    final until = approvedUntil[packageName] ?? 0;
+    final isBlocked = isPackageBlockedByRawList(packageName, blockedPackages);
+    final until = maxApprovedUntilMsForPackage(packageName, approvedUntil);
+    final hasPending = hasPendingExtensionForPackage(packageName, extensionRequests);
     final isTemporarilyApproved = isBlocked && until > now;
-    final hasPending = extensionRequests.any((r) => r.packageName == packageName && r.status == ExtensionRequestStatus.pending);
     final canRequestExtension = isBlocked && !hasPending;
     final requiresPermissionRecovery = isBlocked && !isTemporarilyApproved && missingPermissions.isNotEmpty;
 

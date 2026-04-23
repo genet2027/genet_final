@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
+import 'dart:async';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -26,6 +27,8 @@ const String _kExtensionApprovedLegacy = 'genet_extension_approved_until';
 const String _defaultChildId = 'default';
 
 final _rng = Random();
+final StreamController<String?> _selectedChildIdController =
+    StreamController<String?>.broadcast();
 
 /// Generates a 4-digit numeric link code (0000-9999).
 String generateLinkCode() {
@@ -68,7 +71,10 @@ Future<void> setSelectedChildId(String? childId) async {
   } else {
     await prefs.setString(_kSelectedChildIdKey, childId);
   }
+  _selectedChildIdController.add(childId);
 }
+
+Stream<String?> watchSelectedChildId() => _selectedChildIdController.stream;
 
 /// Child device: linked child id and name (after QR/code link).
 Future<String?> getLinkedChildId() async {

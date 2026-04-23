@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.graphics.PixelFormat
 import android.os.Build
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
@@ -27,13 +28,14 @@ class BlockOverlayManager(private val context: android.content.Context) {
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
         }
+        // Must NOT use FLAG_NOT_FOCUSABLE: otherwise Back is delivered to the blocked app below.
         WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             type,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -48,7 +50,17 @@ class BlockOverlayManager(private val context: android.content.Context) {
             view = LayoutInflater.from(context).inflate(R.layout.overlay_lock, null)
             view.findViewById<TextView>(R.id.overlay_title).text = "לילה טוב"
             view.findViewById<TextView>(R.id.overlay_subtitle).text = "Good night"
+            view.isFocusable = true
+            view.isFocusableInTouchMode = true
             view.setOnTouchListener { _, _ -> true }
+            view.setOnKeyListener { _, keyCode, event ->
+                if (event.action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_BACK) {
+                    android.util.Log.d(GenetAccessibilityService.TAG, "back blocked: overlay consumed Back")
+                    true
+                } else {
+                    false
+                }
+            }
             overlayView = view
         }
         return view
@@ -66,6 +78,9 @@ class BlockOverlayManager(private val context: android.content.Context) {
             }
         } else {
             view.visibility = View.VISIBLE
+        }
+        view.post {
+            view.requestFocus()
         }
     }
 

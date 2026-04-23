@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../repositories/children_repository.dart';
 import '../theme/app_theme.dart';
+import '../widgets/natural_text_field.dart';
 import 'child_home_screen.dart';
 
 /// Step 1: Child enters first name, last name, age, school code. Saved locally and used when linking to parent.
@@ -85,7 +86,7 @@ class _ChildSelfIdentifyScreenState extends State<ChildSelfIdentifyScreen> {
                 ),
               ),
               const SizedBox(height: 24),
-              TextField(
+              NaturalTextField(
                 controller: _firstNameController,
                 decoration: const InputDecoration(
                   labelText: 'שם פרטי',
@@ -94,7 +95,7 @@ class _ChildSelfIdentifyScreenState extends State<ChildSelfIdentifyScreen> {
                 textInputAction: TextInputAction.next,
               ),
               const SizedBox(height: 12),
-              TextField(
+              NaturalTextField(
                 controller: _lastNameController,
                 decoration: const InputDecoration(
                   labelText: 'שם משפחה',
@@ -103,7 +104,7 @@ class _ChildSelfIdentifyScreenState extends State<ChildSelfIdentifyScreen> {
                 textInputAction: TextInputAction.next,
               ),
               const SizedBox(height: 12),
-              TextField(
+              NaturalTextField(
                 controller: _ageController,
                 decoration: const InputDecoration(
                   labelText: 'גיל',
@@ -114,7 +115,7 @@ class _ChildSelfIdentifyScreenState extends State<ChildSelfIdentifyScreen> {
                 textInputAction: TextInputAction.next,
               ),
               const SizedBox(height: 12),
-              TextField(
+              NaturalTextField(
                 controller: _schoolCodeController,
                 decoration: const InputDecoration(
                   labelText: 'קוד בית ספר',

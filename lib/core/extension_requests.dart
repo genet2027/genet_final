@@ -90,13 +90,17 @@ class ExtensionRequest {
   }
 
   factory ExtensionRequest.fromJson(Map<String, dynamic> json) {
+    final createdOrRequested =
+        (json['createdAt'] as num?)?.toInt() ??
+        (json['requestedAt'] as num?)?.toInt() ??
+        0;
     return ExtensionRequest(
       id: json['id'] as String? ?? '',
       packageName: json['packageName'] as String? ?? '',
       appName: json['appName'] as String? ?? '',
       minutes: (json['minutes'] as num?)?.toInt() ?? 0,
       status: json['status'] as String? ?? ExtensionRequestStatus.pending,
-      requestedAt: (json['requestedAt'] as num?)?.toInt() ?? 0,
+      requestedAt: createdOrRequested,
       childId: json['childId'] as String? ?? '',
       childName: json['childName'] as String? ?? '',
       childFirstName: json['childFirstName'] as String? ?? '',
@@ -111,6 +115,7 @@ class ExtensionRequest {
         'minutes': minutes,
         'status': status,
         'requestedAt': requestedAt,
+        'createdAt': requestedAt,
         'childId': childId,
         'childName': childName,
         'childFirstName': childFirstName,

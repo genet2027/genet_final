@@ -1,19 +1,55 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../features/blocked_apps/blocked_package_matching.dart';
 import '../../repositories/children_repository.dart';
+import '../../services/installed_apps_bridge.dart';
+import '../user_role.dart';
+import '../vpn_remote_child.dart';
 
 /// Syncs parent config (PIN, Sleep Lock, blocked apps) to native Android storage
 /// so the Accessibility Service can enforce locks.
 class GenetConfig {
+  static const _channel = MethodChannel('com.example.genet_final/config');
+  static const _installedAppsEventsChannel =
+      EventChannel('com.example.genet_final/installed_apps_events');
+
+  /// Persists [kUserRoleParent] / [kUserRoleChild] and sets native child mode in one step.
+  static Future<void> commitUserRole(String role) async {
+    await setUserRole(role);
+    await setChildMode(role == kUserRoleChild);
+  }
+
+  /// Applies native [setChildMode] from saved role. Unknown / missing role → parent (no enforcement).
+  static Future<void> applyNativeChildModeFromSavedRole() async {
+    if (!Platform.isAndroid) return;
+    final role = await getUserRole();
+    final isChild = role == kUserRoleChild;
+    await setChildMode(isChild);
+  }
+
+  /// Call after a Firestore snapshot for the linked child is merged into local prefs
+  /// ([watchChildDocStream] on the child device only — not on parent UI streams).
+  /// Pushes blocked apps / extension approvals / sleep lock to Android so remote parent changes enforce on this device.
+  /// No-op when [getUserRole] is not [kUserRoleChild] (parent emulator never applies child policy natively).
+  static Future<void> syncToNativeAfterRemoteChildDoc() async {
+    if (!Platform.isAndroid) return;
+    final role = await getUserRole();
+    if (role != kUserRoleChild) return;
+    await syncToNative();
+  }
+
   /// Sync all config from Flutter prefs to native. Call on app startup.
   /// When this device is linked to a child, blocked apps and extension approved
   /// are taken from that child's data.
+  /// Native enforcement only when saved role is child.
   static Future<void> syncToNative() async {
     if (!Platform.isAndroid) return;
+    await applyNativeChildModeFromSavedRole();
     try {
       final prefs = await SharedPreferences.getInstance();
 
@@ -35,7 +71,19 @@ class GenetConfig {
             ? _decodeExtensionApproved(raw) ?? {}
             : {};
       }
-      await setBlockedApps(blocked);
+      final expanded = effectiveBlockedPackageIds(blocked);
+      final effective =
+          VpnRemoteChildPolicy.effectiveBlockedFromLists(blocked, extensionApproved);
+      debugPrint(
+        '[GenetConfig] nativePush path=GenetConfig.syncToNative channel=com.example.genet_final/config '
+        'rawBlocked=$blocked expandedCatalog=$expanded effectiveNative=$effective',
+      );
+      if (effective.isEmpty) {
+        debugPrint(
+          '[GenetConfig] nativePush syncToNative: effectiveNative is empty -> overwriting native blocked list with []',
+        );
+      }
+      await setBlockedApps(effective);
       await setExtensionApproved(extensionApproved);
 
       final permissionLock = prefs.getBool('genet_permission_lock_enabled') ?? false;
@@ -70,7 +118,12 @@ class GenetConfig {
     }
   }
 
-  static const _channel = MethodChannel('com.example.genet_final/config');
+  static Future<void> setVpnProtectionLost(bool lost) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod('setVpnProtectionLost', {'lost': lost});
+    } on PlatformException catch (_) {}
+  }
 
   static Future<void> setPin(String pin) async {
     if (!Platform.isAndroid) return;
@@ -94,11 +147,43 @@ class GenetConfig {
     } on PlatformException catch (_) {}
   }
 
+  static Future<void> setNightModeActive(bool active) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod('setNightModeActive', {
+        'active': active,
+      });
+    } on PlatformException catch (_) {}
+  }
+
   static Future<void> setBlockedApps(List<String> packageNames) async {
     if (!Platform.isAndroid) return;
+    debugPrint(
+      '[GenetConfig] setBlockedApps channel=com.example.genet_final/config count=${packageNames.length} '
+      'empty=${packageNames.isEmpty}',
+    );
     try {
       await _channel.invokeMethod('setBlockedApps', {'packages': packageNames});
     } on PlatformException catch (_) {}
+  }
+
+  static Future<List<Map<String, dynamic>>> getInstalledApps() async {
+    return InstalledAppsBridge.fetchLegacyMapsForInstalledApp();
+  }
+
+  static Stream<Map<String, dynamic>> watchInstalledAppsChanges() {
+    if (!Platform.isAndroid) return const Stream.empty();
+    return _installedAppsEventsChannel.receiveBroadcastStream().map((event) {
+      if (event is Map) {
+        return Map<String, dynamic>.from(event);
+      }
+      return <String, dynamic>{};
+    }).where((event) {
+      return (event['action'] as String?)?.isNotEmpty == true &&
+          (event['package'] as String?)?.isNotEmpty == true;
+    }).handleError((Object error, StackTrace stackTrace) {
+      debugPrint('[RELEVANT_APPS] installedAppsStreamError=$error');
+    });
   }
 
   static Future<void> openAccessibilitySettings() async {
@@ -162,6 +247,16 @@ class GenetConfig {
       return r ?? true;
     } on PlatformException catch (_) {
       return true;
+    }
+  }
+
+  static Future<int?> getElapsedRealtimeMs() async {
+    if (!Platform.isAndroid) return null;
+    try {
+      final r = await _channel.invokeMethod<int>('getElapsedRealtimeMs');
+      return r;
+    } on PlatformException catch (_) {
+      return null;
     }
   }
 

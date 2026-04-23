@@ -3,14 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../core/config/genet_config.dart';
+import '../core/user_role.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
 import 'parent_dashboard_tab.dart';
-import 'reports_tab.dart';
 import 'required_permissions_screen.dart';
 import 'settings_screen.dart';
 
-/// Parent-only shell with BottomNavigationBar: Dashboard | Reports | Settings.
+/// Parent-only shell with BottomNavigationBar: Dashboard | Settings.
 class ParentShell extends StatefulWidget {
   const ParentShell({super.key});
 
@@ -26,7 +26,7 @@ class _ParentShellState extends State<ParentShell> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    GenetConfig.setChildMode(false);
+    GenetConfig.commitUserRole(kUserRoleParent);
     getOrCreateParentId();
     WidgetsBinding.instance.addObserver(this);
     _checkPermissionsAndShowIfNeeded();
@@ -49,7 +49,8 @@ class _ParentShellState extends State<ParentShell> with WidgetsBindingObserver {
     if (_showingRequiredPermissions || !mounted) return;
     final missing = await GenetConfig.getMissingPermissions();
     if (!mounted) return;
-    if (missing.isEmpty) return;
+    final missingForMainFlow = missing.where((e) => e != 'accessibility').toList();
+    if (missingForMainFlow.isEmpty) return;
     setState(() => _showingRequiredPermissions = true);
     if (!mounted) return;
     await Navigator.of(context).push<void>(
@@ -64,7 +65,6 @@ class _ParentShellState extends State<ParentShell> with WidgetsBindingObserver {
 
   static const List<_TabInfo> _tabs = [
     _TabInfo(icon: Icons.dashboard_rounded, label: 'הורה'),
-    _TabInfo(icon: Icons.chat_rounded, label: 'דיווחים'),
     _TabInfo(icon: Icons.settings_rounded, label: 'הגדרות'),
   ];
 
@@ -78,7 +78,6 @@ class _ParentShellState extends State<ParentShell> with WidgetsBindingObserver {
           index: _selectedIndex,
           children: const [
             ParentDashboardTab(),
-            ReportsTab(),
             SettingsScreen(),
           ],
         ),

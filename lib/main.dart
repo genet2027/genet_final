@@ -1,24 +1,35 @@
-import 'package:firebase_core/firebase_core.dart';
+import 'dart:async';
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'bootstrap/app_bootstrap.dart';
+import 'debug_firebase_state.dart';
 import 'core/config/genet_config.dart';
-import 'firebase_options.dart';
+import 'core/user_role.dart';
 import 'l10n/app_localizations.dart';
 import 'repositories/children_repository.dart';
 import 'providers/language_provider.dart';
 import 'screens/permission_recovery_screen.dart';
 import 'screens/role_select_screen.dart';
+import 'services/installed_apps_bridge.dart';
 import 'services/json_translations.dart';
 import 'services/night_mode_service.dart';
 import 'theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await initializeAppBootstrap();
+  if (kDebugMode) {
+    debugFirebaseState();
+  }
   await JsonTranslations.ensureLoaded();
+  // Step 1 temporary: full installed-apps bridge dump (remove or gate when done verifying).
+  if (kDebugMode && Platform.isAndroid) {
+    unawaited(InstalledAppsBridge.debugPrintSample());
+  }
   await ensureDefaultChild();
   GenetConfig.syncToNative();
   final nightModeService = NightModeService();
@@ -55,15 +66,23 @@ class _GenetAppState extends State<GenetApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
+    GenetConfig.applyNativeChildModeFromSavedRole();
+    // Child device: re-push Firestore-backed prefs to native after backgrounding.
+    GenetConfig.syncToNativeAfterRemoteChildDoc();
     _checkPermissionRecovery();
   }
 
   Future<void> _checkPermissionRecovery() async {
+    final role = await getUserRole();
+    if (role != kUserRoleChild) return;
     final show = await GenetConfig.shouldShowPermissionRecovery();
     if (!show || !mounted) return;
-    _navigatorKey.currentState?.push<void>(
-      MaterialPageRoute(builder: (_) => const PermissionRecoveryScreen()),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _navigatorKey.currentState?.push<void>(
+        MaterialPageRoute(builder: (_) => const PermissionRecoveryScreen()),
+      );
+    });
   }
 
   @override

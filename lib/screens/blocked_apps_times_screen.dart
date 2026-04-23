@@ -1,10 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/extension_requests.dart';
+import '../features/blocked_apps/blocked_package_matching.dart';
+import '../models/installed_app.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
@@ -12,8 +13,6 @@ import '../theme/app_theme.dart';
 const String _kSleepLockEnabledKey = 'genet_sleep_lock_enabled';
 const String _kSleepLockStartKey = 'genet_sleep_lock_start';
 const String _kSleepLockEndKey = 'genet_sleep_lock_end';
-
-const MethodChannel _channel = MethodChannel('com.example.genet_final/config');
 
 String _formatRemaining(int totalSeconds) {
   final m = totalSeconds ~/ 60;
@@ -34,7 +33,7 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
   String _startTime = '20:00';
   String _endTime = '08:00';
   List<String> _blockedPackages = [];
-  List<Map<String, dynamic>> _installedApps = [];
+  List<InstalledApp> _installedApps = [];
   List<ExtensionRequest> _requests = [];
   Map<String, int> _approvedUntil = {};
   bool _loading = true;
@@ -91,11 +90,7 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
       }
       approvedUntil = await getExtensionApprovedUntil();
     }
-    List<Map<String, dynamic>> installed = [];
-    try {
-      final raw = await _channel.invokeMethod<List<dynamic>>('getInstalledApps');
-      if (raw != null) installed = raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-    } on PlatformException catch (_) {}
+    final installed = await scanInstalledApps();
     final requests = await getExtensionRequests();
     if (mounted) {
       setState(() {
@@ -114,18 +109,21 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
     }
   }
 
-  List<Map<String, dynamic>> get _blockedAppsWithNames {
+  List<InstalledApp> get _blockedAppsWithNames {
     return _installedApps.where((app) {
-      final pkg = app['package'] as String? ?? '';
-      return _blockedPackages.contains(pkg);
+      return isPackageBlockedByRawList(app.packageName, _blockedPackages);
     }).toList();
   }
 
   String _requestStatusForPackage(String packageName) {
-    final untilMs = _approvedUntil[packageName];
+    final untilMs = maxApprovedUntilMsForPackage(packageName, _approvedUntil);
     final now = DateTime.now().millisecondsSinceEpoch;
-    if (untilMs != null && untilMs > now) return 'אושר זמנית';
-    final r = _requests.where((e) => e.packageName == packageName).toList();
+    if (untilMs > now) return 'אושר זמנית';
+    final group = fixedCatalogAliasGroupForPackage(packageName);
+    final r = _requests.where((e) {
+      final ep = normalizeBlockedPackageId(e.packageName);
+      return ep != null && group.contains(ep);
+    }).toList();
     if (r.isEmpty) return '';
     final last = r.last;
     if (last.status == ExtensionRequestStatus.pending) return 'ממתין לאישור';
@@ -134,8 +132,8 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
   }
 
   int? _remainingSeconds(String packageName) {
-    final untilMs = _approvedUntil[packageName];
-    if (untilMs == null) return null;
+    final untilMs = maxApprovedUntilMsForPackage(packageName, _approvedUntil);
+    if (untilMs <= 0) return null;
     final now = DateTime.now().millisecondsSinceEpoch;
     if (untilMs <= now) return null;
     return ((untilMs - now) / 1000).floor();
@@ -282,8 +280,8 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
                     )
                   else
                     ..._blockedAppsWithNames.map((app) {
-                      final pkg = app['package'] as String? ?? '';
-                      final name = app['name'] as String? ?? pkg;
+                      final pkg = app.packageName;
+                      final name = app.appName;
                       final status = _requestStatusForPackage(pkg);
                       return Card(
                         margin: const EdgeInsets.only(bottom: 8),

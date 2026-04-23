@@ -1,12 +1,35 @@
+import 'dart:async';
 import 'dart:developer' as developer;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/config/genet_config.dart';
 import '../core/extension_requests.dart';
 import '../models/child_entity.dart';
+import '../models/installed_app.dart';
+import '../models/parent_message.dart';
+import '../services/installed_apps_categorization.dart';
 import 'children_repository.dart';
 
+/// Parent ↔ child Firestore sync and local identity helpers.
+///
+/// **Trace map** (search for `===` section headers in this file):
+/// - Local identity (parent device / linked parent on child)
+/// - Firestore paths, document refs, field name constants
+/// - Installed apps inventory (normalize, scan, sync, read, listen)
+/// - Connection status, blocked packages, parent-side VPN policy writes
+/// - Parent messages to child
+/// - Child-reported VPN status
+/// - Extension approved + extension request CRUD
+/// - Child document snapshot → local prefs + [SyncedChildData] parsing
+/// - Streams (watches)
+/// - Remote sleep lock, [resolveRequireVpn], trusted server time, child settings
+
+// =============================================================================
+// === Local identity: parent device (stored prefs) ===
+// =============================================================================
 // --- Parent ID (parent device) ---
 const String _kParentIdKey = 'genet_parent_id';
 
@@ -28,6 +51,9 @@ Future<String?> getParentId() async {
   return prefs.getString(_kParentIdKey);
 }
 
+// =============================================================================
+// === Local identity: child device linked parent id ===
+// =============================================================================
 // --- Child device: linked parent id ---
 const String _kLinkedParentIdKey = 'genet_linked_parent_id';
 
@@ -45,6 +71,9 @@ Future<void> setLinkedParentId(String? parentId) async {
   }
 }
 
+// =============================================================================
+// === Firestore paths & document references ===
+// =============================================================================
 // --- Firebase paths ---
 String _parentChildrenPath(String parentId) => 'genet_parents/$parentId/children';
 
@@ -59,6 +88,9 @@ const String _kBlockedPackages = 'blockedPackages';
 const String _kExtensionApproved = 'extensionApproved';
 const String _kExtensionRequests = 'extensionRequests';
 const String _kUpdatedAt = 'updatedAt';
+const String _kVpnEnabled = 'vpnEnabled';
+const String _kVpnStatus = 'vpnStatus';
+const String _kVpnStatusMessage = 'vpnStatusMessage';
 const String _kLinkCode = 'linkCode';
 const String _kParentId = 'parentId';
 const String _kConnected = 'connected';
@@ -72,8 +104,273 @@ const String _kLastName = 'lastName';
 const String _kName = 'name';
 const String _kAge = 'age';
 const String _kSchoolCode = 'schoolCode';
+const String _kRelevantApps = 'relevantApps';
+const String _kRelevantAppsCount = 'relevantAppCount';
+const String _kRawInstalledAppsCount = 'rawInstalledAppCount';
+const String _kRelevantAppsHash = 'relevantAppsHash';
+const String _kRelevantAppsLastSyncAt = 'lastSyncAt';
+const String _kRelevantAppsLastSyncTrigger = 'lastSyncTrigger';
+const String _kInstalledAppsFingerprintPrefix = 'genet_installed_apps_fp_';
+const String _kLocalRawInstalledCountPrefix = 'genet_child_raw_installed_count_v1_';
 
-/// Parent: create/update child doc in Firebase when child connects. Also write to local and child_link_status.
+DocumentReference<Map<String, dynamic>> _childInstalledAppsDocRef(String childId) {
+  return FirebaseFirestore.instance.doc('child_apps/$childId');
+}
+
+String childInstalledAppsPath(String childId) {
+  if (childId.isEmpty) return 'child_apps/';
+  return _childInstalledAppsDocRef(childId).path;
+}
+
+// =============================================================================
+// === Identity normalization & installed-app path validation ===
+// =============================================================================
+String? normalizeIdentifier(String? raw) {
+  if (raw == null) return null;
+  final value = raw.trim();
+  if (value.isEmpty) return null;
+  return value;
+}
+
+bool installedAppsHaveDuplicates(List<InstalledApp> apps) {
+  final seen = <String>{};
+  for (final app in apps) {
+    if (!seen.add(app.packageName)) return true;
+  }
+  return false;
+}
+
+bool isValidChildAppsPath(String childId, String path) {
+  final normalizedChildId = normalizeIdentifier(childId);
+  if (normalizedChildId == null) return false;
+  return path == 'child_apps/$normalizedChildId';
+}
+
+List<String> _normalizePackageNames(List<String> packages) {
+  final byPackage = <String>{};
+  for (final raw in packages) {
+    final packageName = raw.trim();
+    if (packageName.isEmpty) continue;
+    byPackage.add(packageName);
+  }
+  final list = byPackage.toList()..sort();
+  return list;
+}
+
+List<InstalledApp> _normalizeInstalledApps(dynamic raw) {
+  if (raw is! List) return [];
+  final byPackage = <String, InstalledApp>{};
+  for (final entry in raw.whereType<Map>()) {
+    final app = InstalledApp.fromBackendMap(
+      Map<String, dynamic>.from(entry).cast<String, dynamic>(),
+    );
+    if (app == null) continue;
+    byPackage[app.packageName] = app;
+  }
+  final cleanApps = byPackage.values.toList()
+    ..sort((a, b) {
+      final byName = a.appName.toLowerCase().compareTo(b.appName.toLowerCase());
+      if (byName != 0) return byName;
+      return a.packageName.compareTo(b.packageName);
+    });
+  return cleanApps;
+}
+
+InstalledAppsInventory _emptyInstalledAppsInventory() {
+  return const InstalledAppsInventory(
+    apps: [],
+    appCount: 0,
+    rawInstalledAppCount: 0,
+    appsHash: '',
+    lastSyncAt: null,
+    lastSyncTrigger: '',
+  );
+}
+
+InstalledAppsInventory _installedAppsInventoryFromData(
+  Map<String, dynamic>? data,
+) {
+  final apps = _normalizeInstalledApps(data?[_kRelevantApps]);
+  return InstalledAppsInventory(
+    apps: apps,
+    appCount: (data?[_kRelevantAppsCount] as num?)?.toInt() ?? apps.length,
+    rawInstalledAppCount:
+        (data?[_kRawInstalledAppsCount] as num?)?.toInt() ?? apps.length,
+    appsHash: (data?[_kRelevantAppsHash] as String? ?? '').trim(),
+    lastSyncAt: (data?[_kRelevantAppsLastSyncAt] as num?)?.toInt(),
+    lastSyncTrigger:
+        (data?[_kRelevantAppsLastSyncTrigger] as String? ?? '').trim(),
+  );
+}
+
+String _packagesDebugSummary(List<InstalledApp> apps) {
+  return _sortedInstalledPackages(apps).join(',');
+}
+
+List<String> _sortedInstalledPackages(List<InstalledApp> apps) {
+  final byPackage = <String>{};
+  for (final app in apps) {
+    final packageName = normalizeIdentifier(app.packageName);
+    if (packageName == null) continue;
+    byPackage.add(packageName);
+  }
+  final list = byPackage.toList()..sort();
+  return list;
+}
+
+// =============================================================================
+// === Installed apps: device scan, classification, backend sync, parent read ===
+// =============================================================================
+Future<List<InstalledApp>> scanInstalledApps() async {
+  return InstalledApp.fromNativeList(await GenetConfig.getInstalledApps());
+}
+
+/// Step 4 — stable signature for sync skip / parent visible dedupe: package, normalized category, unknown flag.
+String relevantInventorySyncFingerprint(List<InstalledApp> apps) {
+  if (apps.isEmpty) return '';
+  final sorted = List<InstalledApp>.from(apps)
+    ..sort((a, b) => a.packageName.compareTo(b.packageName));
+  return sorted
+      .map(
+        (e) =>
+            '${e.packageName}|${normalizeInstalledAppCategory(e.category)}|${e.isUnknownCategory}',
+      )
+      .join(',');
+}
+
+/// Test-only hook: when set, [syncRelevantApps] skips Firestore (engine / integration tests).
+@visibleForTesting
+typedef SyncRelevantAppsTestHook = Future<int> Function({
+  required String childId,
+  required List<InstalledApp> relevantApps,
+  required int rawInstalledAppCount,
+  String trigger,
+});
+
+@visibleForTesting
+SyncRelevantAppsTestHook? debugSyncRelevantAppsForTests;
+
+/// Single child → backend write for relevant installed apps (full replace). Callers supply filtered list + raw count.
+///
+/// Does not scan, categorize, or read native lists. [relevantApps] must already be Step‑2 filtered.
+Future<int> syncRelevantApps({
+  required String childId,
+  required List<InstalledApp> relevantApps,
+  required int rawInstalledAppCount,
+  String trigger = 'unknown',
+}) async {
+  final hook = debugSyncRelevantAppsForTests;
+  if (hook != null) {
+    return hook(
+      childId: childId,
+      relevantApps: relevantApps,
+      rawInstalledAppCount: rawInstalledAppCount,
+      trigger: trigger,
+    );
+  }
+  final normalizedChildId = normalizeIdentifier(childId);
+  if (normalizedChildId == null) {
+    debugPrint('[RELEVANT_APPS] CHILD ID: invalid');
+    return 0;
+  }
+  debugPrint('[RELEVANT_APPS] CHILD ID: $normalizedChildId');
+  debugPrint('[RELEVANT_APPS] triggerReason=$trigger');
+  debugPrint('[RELEVANT_APPS] syncRelevantApps started (single entry)');
+  final prefs = await SharedPreferences.getInstance();
+  final rawCountKey = '$_kLocalRawInstalledCountPrefix$normalizedChildId';
+  final fingerprintKey = '$_kInstalledAppsFingerprintPrefix$normalizedChildId';
+
+  if (installedAppsHaveDuplicates(relevantApps)) {
+    debugPrint('[RELEVANT_APPS] VALIDATION: duplicate relevant apps detected before write');
+  }
+  final fingerprint = relevantInventorySyncFingerprint(relevantApps);
+  final lastFingerprint = prefs.getString(fingerprintKey) ?? '';
+  final lastRawSynced = prefs.getInt(rawCountKey);
+  debugPrint('[RELEVANT_APPS] CURRENT SYNC FP: $fingerprint');
+  debugPrint('[RELEVANT_APPS] LAST SYNCED FP: $lastFingerprint');
+  debugPrint('[RELEVANT_APPS] rawCount=$rawInstalledAppCount lastRawSynced=$lastRawSynced');
+  final parentId = await getLinkedParentId();
+  final normalizedParentId = normalizeIdentifier(parentId);
+  if (normalizedParentId != null) {
+    debugPrint('[RELEVANT_APPS] PARENT ID: $normalizedParentId');
+  }
+  if (fingerprint == lastFingerprint && lastRawSynced == rawInstalledAppCount) {
+    debugPrint('[RELEVANT_APPS] syncSkippedReason=unchanged_fingerprint_and_raw_count');
+    debugPrint('[RELEVANT_APPS] writeSkippedUnchanged=true');
+    return relevantApps.length;
+  }
+  final targetPath = _childInstalledAppsDocRef(normalizedChildId).path;
+  debugPrint('[RELEVANT_APPS] filteredAppsCount=${relevantApps.length}');
+  debugPrint('[RELEVANT_APPS] filteredPackageNames=${_packagesDebugSummary(relevantApps)}');
+  debugPrint('[RELEVANT_APPS] backendWriteMode=REPLACE');
+  debugPrint('[RELEVANT_APPS] backendTargetPath=$targetPath');
+  if (!isValidChildAppsPath(normalizedChildId, targetPath)) {
+    debugPrint('[RELEVANT_APPS] VALIDATION: invalid child apps write path');
+    return 0;
+  }
+  try {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _childInstalledAppsDocRef(normalizedChildId).set({
+      _kRelevantApps: relevantApps.map((e) => e.toBackendMap()).toList(),
+      _kRelevantAppsCount: relevantApps.length,
+      _kRawInstalledAppsCount: rawInstalledAppCount,
+      _kRelevantAppsHash: fingerprint,
+      _kRelevantAppsLastSyncAt: now,
+      _kRelevantAppsLastSyncTrigger: trigger,
+      _kUpdatedAt: FieldValue.serverTimestamp(),
+    });
+    await prefs.setString(fingerprintKey, fingerprint);
+    await prefs.setInt(rawCountKey, rawInstalledAppCount);
+    debugPrint('[RELEVANT_APPS] syncRelevantAppsFinished=${relevantApps.length}');
+    debugPrint('[RELEVANT_APPS] backendWriteSuccess=true');
+  } catch (error, st) {
+    debugPrint('[RELEVANT_APPS] backendWriteFailure=$error $st');
+    return 0;
+  }
+  return relevantApps.length;
+}
+
+Future<InstalledAppsInventory> getChildRelevantAppsInventoryFromFirebase(
+  String childId,
+) async {
+  final normalizedChildId = normalizeIdentifier(childId);
+  if (normalizedChildId == null) {
+    return _emptyInstalledAppsInventory();
+  }
+  final path = childInstalledAppsPath(normalizedChildId);
+  debugPrint('[RELEVANT_APPS] READ PATH: $path');
+  debugPrint('[RELEVANT_APPS] parentReadSourcePath=$path');
+  debugPrint('[RELEVANT_APPS] parentReadSourceField=$_kRelevantApps');
+  final snap = await _childInstalledAppsDocRef(normalizedChildId).get();
+  final inventory = _installedAppsInventoryFromData(snap.data());
+  debugPrint('[RELEVANT_APPS] parentReadCount=${inventory.apps.length}');
+  return inventory;
+}
+
+Future<List<InstalledApp>> getChildRelevantAppsFromFirebase(String childId) async {
+  return (await getChildRelevantAppsInventoryFromFirebase(childId)).apps;
+}
+
+Stream<InstalledAppsInventory> listenToSelectedChildRelevantApps(String childId) {
+  final normalizedChildId = normalizeIdentifier(childId);
+  if (normalizedChildId == null) {
+    return Stream.value(_emptyInstalledAppsInventory());
+  }
+  final path = childInstalledAppsPath(normalizedChildId);
+  debugPrint('[RELEVANT_APPS] READ PATH: $path');
+  debugPrint('[RELEVANT_APPS] parentReadSourcePath=$path');
+  debugPrint('[RELEVANT_APPS] parentReadSourceField=$_kRelevantApps');
+  return _childInstalledAppsDocRef(normalizedChildId).snapshots().map((snap) {
+    final inventory = _installedAppsInventoryFromData(snap.data());
+    debugPrint('[RELEVANT_APPS] parentReadCount=${inventory.apps.length}');
+    return inventory;
+  });
+}
+
+// =============================================================================
+// === Parent connect write, connection status, blocked apps, VPN policy ===
+// =============================================================================
+/// Parent: merge-write the canonical child doc `genet_parents/{parentId}/children/{childId}` (connectionStatus, parentId, profile, linkCode, policy fields).
 Future<void> upsertParentChildDoc({
   required String parentId,
   required String childId,
@@ -84,6 +381,9 @@ Future<void> upsertParentChildDoc({
   required String schoolCode,
   required String linkCode,
 }) async {
+  debugPrint(
+    '[GenetSync] parent connect write path=genet_parents/$parentId/children/$childId childId=$childId',
+  );
   final ref = _childDocRef(parentId, childId);
   const connectWriteFields = [_kProfile, _kParentId, _kConnectionStatus, _kLinkCode, _kConnectedAt, _kBlockedPackages, _kExtensionApproved, _kExtensionRequests, _kUpdatedAt];
   developer.log('CONNECT_WRITE_PATH = ${ref.path}', name: 'Sync');
@@ -115,8 +415,307 @@ bool isConnectionStatusConnected(String? status) {
   return status == _kConnected;
 }
 
+/// Waits until [genet_parents]/[parentId]/children/[childId] exists and shows a valid
+/// connected state for this exact parent/child pair (canonical link completion).
+///
+/// Ignores missing snapshots until [timeout] (transient race before first write).
+/// Returns false on timeout or empty [parentId]/[childId].
+Future<bool> waitForCanonicalChildConnected({
+  required String parentId,
+  required String childId,
+  Duration timeout = const Duration(seconds: 45),
+}) async {
+  final normParent = normalizeIdentifier(parentId);
+  final normChild = normalizeIdentifier(childId);
+  if (normParent == null || normChild == null) return false;
+
+  final ref = _childDocRef(normParent, normChild);
+  final completer = Completer<bool>();
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? sub;
+  var finished = false;
+
+  void complete(bool value) {
+    if (finished) return;
+    finished = true;
+    sub?.cancel();
+    if (!completer.isCompleted) {
+      completer.complete(value);
+    }
+  }
+
+  final timer = Timer(timeout, () => complete(false));
+
+  sub = ref.snapshots().listen(
+    (snap) {
+      if (!snap.exists || snap.data() == null) return;
+      final data = snap.data()!;
+      final docParent = normalizeIdentifier(data[_kParentId] as String?);
+      if (docParent == null || docParent != normParent) return;
+      final status = data[_kConnectionStatus] as String?;
+      if (!isConnectionStatusConnected(status)) return;
+      timer.cancel();
+      complete(true);
+    },
+    onError: (_) {
+      timer.cancel();
+      complete(false);
+    },
+  );
+
+  final result = await completer.future;
+  timer.cancel();
+  return result;
+}
+
+/// One-shot read of canonical child document data (`genet_parents/{parentId}/children/{childId}`).
+Future<Map<String, dynamic>?> readCanonicalChildData(
+  String parentId,
+  String childId,
+) async {
+  final p = normalizeIdentifier(parentId);
+  final c = normalizeIdentifier(childId);
+  if (p == null || c == null) return null;
+  final readHook = debugReadCanonicalChildDataForTests;
+  if (readHook != null) {
+    return readHook(p, c);
+  }
+  final snap = await _childDocRef(p, c).get();
+  if (!snap.exists || snap.data() == null) return null;
+  return snap.data();
+}
+
+/// Bounded server reads for startup preflight (transient null / offline).
+Future<Map<String, dynamic>?> readCanonicalChildDataWithBoundedRetry({
+  required String parentId,
+  required String childId,
+  required Duration timeout,
+}) async {
+  final p = normalizeIdentifier(parentId);
+  final c = normalizeIdentifier(childId);
+  if (p == null || c == null) return null;
+  final boundedHook = debugReadCanonicalChildDataWithBoundedRetryForTests;
+  if (boundedHook != null) {
+    return boundedHook(p, c, timeout);
+  }
+  final sw = Stopwatch()..start();
+  while (sw.elapsed < timeout) {
+    try {
+      final data = await readCanonicalChildData(p, c);
+      if (data != null) return data;
+    } catch (e, st) {
+      developer.log('readCanonicalChildDataWithBoundedRetry: $e $st', name: 'Sync');
+    }
+    final remaining = timeout - sw.elapsed;
+    if (remaining <= Duration.zero) break;
+    await Future<void>.delayed(
+      remaining < const Duration(milliseconds: 300)
+          ? remaining
+          : const Duration(milliseconds: 300),
+    );
+  }
+  return null;
+}
+
+/// Result of [preflightSavedChildCanonicalLink] for child-role routing (prefs are bootstrap only).
+enum SavedChildLinkPreflightResult {
+  /// Canonical doc exists and is connected for the saved parent id.
+  verifiedConnected,
+  /// Doc shows disconnected / wrong parent, or saved prefs pair is unusable.
+  verifiedInvalidOrStale,
+  /// Doc missing or unreadable within [timeout]; proceed to child home and rely on stream + stale reconcile.
+  unverifiedTransient,
+}
+
+// --- Test-only hooks (deterministic tests; always null in production) ---
+
+@visibleForTesting
+typedef DebugReadCanonicalChildDataTestHook = Future<Map<String, dynamic>?> Function(
+  String normalizedParentId,
+  String normalizedChildId,
+);
+
+@visibleForTesting
+DebugReadCanonicalChildDataTestHook? debugReadCanonicalChildDataForTests;
+
+@visibleForTesting
+typedef DebugReadCanonicalBoundedRetryTestHook = Future<Map<String, dynamic>?> Function(
+  String normalizedParentId,
+  String normalizedChildId,
+  Duration timeout,
+);
+
+@visibleForTesting
+DebugReadCanonicalBoundedRetryTestHook? debugReadCanonicalChildDataWithBoundedRetryForTests;
+
+@visibleForTesting
+typedef DebugSetChildConnectionStatusTestHook = Future<void> Function(
+  String parentId,
+  String childId,
+  String status,
+);
+
+@visibleForTesting
+DebugSetChildConnectionStatusTestHook? debugSetChildConnectionStatusFirebaseForTests;
+
+@visibleForTesting
+typedef DebugPreflightSavedChildResultHook = Future<SavedChildLinkPreflightResult> Function();
+
+@visibleForTesting
+DebugPreflightSavedChildResultHook? debugPreflightSavedChildCanonicalLinkResultForTests;
+
+/// Clears durable child link prefs; keeps [genet_local_child_id] and other identity keys.
+Future<void> clearChildLinkedPrefsKeepLocalIdentity() async {
+  await setLinkedChild(null, null);
+  await setLinkedParentId(null);
+}
+
+/// One bounded canonical check for saved `genet_linked_parent_id` + `genet_linked_child_id`.
+Future<SavedChildLinkPreflightResult> preflightSavedChildCanonicalLink({
+  Duration timeout = const Duration(seconds: 4),
+}) async {
+  final p = normalizeIdentifier(await getLinkedParentId());
+  final c = normalizeIdentifier(await getLinkedChildId());
+  if (p == null || c == null) {
+    return SavedChildLinkPreflightResult.verifiedInvalidOrStale;
+  }
+  final preflightQuick = debugPreflightSavedChildCanonicalLinkResultForTests;
+  if (preflightQuick != null) {
+    return preflightQuick();
+  }
+  Map<String, dynamic>? data;
+  try {
+    data = await readCanonicalChildDataWithBoundedRetry(
+      parentId: p,
+      childId: c,
+      timeout: timeout,
+    );
+  } catch (e, st) {
+    developer.log('preflightSavedChildCanonicalLink: unexpected $e $st', name: 'Sync');
+    return SavedChildLinkPreflightResult.unverifiedTransient;
+  }
+  if (data == null) {
+    developer.log(
+      'preflightSavedChildCanonicalLink: unverified (no doc within ${timeout.inMilliseconds}ms) parent=$p child=$c',
+      name: 'Sync',
+    );
+    return SavedChildLinkPreflightResult.unverifiedTransient;
+  }
+  if (!canonicalChildDataActiveForParent(data, p)) {
+    developer.log(
+      'preflightSavedChildCanonicalLink: invalid/stale canonical for saved prefs parent=$p child=$c',
+      name: 'Sync',
+    );
+    return SavedChildLinkPreflightResult.verifiedInvalidOrStale;
+  }
+  developer.log('preflightSavedChildCanonicalLink: verified connected parent=$p child=$c', name: 'Sync');
+  return SavedChildLinkPreflightResult.verifiedConnected;
+}
+
+/// Whether raw canonical child document map indicates an active link for [expectedParentId].
+bool canonicalChildDataActiveForParent(
+  Map<String, dynamic> data,
+  String expectedParentId,
+) {
+  final exp = normalizeIdentifier(expectedParentId);
+  final docPid = normalizeIdentifier(data[_kParentId] as String?);
+  if (exp == null || docPid == null || docPid != exp) return false;
+  final status = data[_kConnectionStatus] as String? ?? _kConnected;
+  return isConnectionStatusConnected(status);
+}
+
+/// True when this device has committed durable child linked prefs for the given pair.
+Future<bool> childDeviceDurablyLinkedToParent(String parentId, String childId) async {
+  final expP = normalizeIdentifier(parentId);
+  final expC = normalizeIdentifier(childId);
+  if (expP == null || expC == null) return false;
+  final lp = normalizeIdentifier(await getLinkedParentId());
+  final lc = normalizeIdentifier(await getLinkedChildId());
+  return lp == expP && lc == expC;
+}
+
+/// After a **child-device** link attempt wrote [upsertParentChildDoc] but never finished local
+/// linked prefs (`genet_linked_parent_id` + `genet_linked_child_id` for this pair): if the
+/// canonical doc is still connected for [parentId]/[childId] with the same [linkCode] as this
+/// attempt, mark it disconnected so retries and parent views are not blocked by a false-remote
+/// "connected" state.
+///
+/// Safe for healthy devices: if prefs already show a completed link for this pair, no-op.
+/// Safe for later retries: if Firestore [linkCode] no longer matches this attempt, no-op.
+/// Idempotent: repeated calls on an already disconnected doc are harmless (may re-touch fields).
+Future<void> reconcileFalseRemoteConnectedAfterIncompleteChildLink({
+  required String parentId,
+  required String childId,
+  required String linkCode,
+}) async {
+  final p = normalizeIdentifier(parentId);
+  final c = normalizeIdentifier(childId);
+  final code = normalizeIdentifier(linkCode);
+  if (p == null || c == null || code == null) return;
+
+  if (await childDeviceDurablyLinkedToParent(parentId, childId)) {
+    developer.log(
+      'INCOMPLETE_LINK_RECONCILE skip: child already durably linked locally parent=$p child=$c',
+      name: 'Sync',
+    );
+    return;
+  }
+
+  var data = await readCanonicalChildData(p, c);
+  if (data == null || !canonicalChildDataActiveForParent(data, p)) {
+    developer.log(
+      'INCOMPLETE_LINK_RECONCILE skip: canonical missing or not connected parent=$p child=$c',
+      name: 'Sync',
+    );
+    return;
+  }
+  if (normalizeIdentifier(data[_kLinkCode] as String?) != code) {
+    developer.log(
+      'INCOMPLETE_LINK_RECONCILE skip: linkCode mismatch (likely newer attempt) parent=$p child=$c',
+      name: 'Sync',
+    );
+    return;
+  }
+
+  if (await childDeviceDurablyLinkedToParent(parentId, childId)) {
+    developer.log(
+      'INCOMPLETE_LINK_RECONCILE skip: linked prefs appeared before disconnect parent=$p child=$c',
+      name: 'Sync',
+    );
+    return;
+  }
+
+  data = await readCanonicalChildData(p, c);
+  if (data == null ||
+      !canonicalChildDataActiveForParent(data, p) ||
+      normalizeIdentifier(data[_kLinkCode] as String?) != code) {
+    developer.log(
+      'INCOMPLETE_LINK_RECONCILE skip: canonical changed before disconnect parent=$p child=$c',
+      name: 'Sync',
+    );
+    return;
+  }
+
+  try {
+    await setChildConnectionStatusFirebase(p, c, _kDisconnected);
+    developer.log(
+      'INCOMPLETE_LINK_RECONCILE applied: canonical marked disconnected parent=$p child=$c code=$code',
+      name: 'Sync',
+    );
+  } catch (e, st) {
+    developer.log(
+      'INCOMPLETE_LINK_RECONCILE failed: parent=$p child=$c error=$e $st',
+      name: 'Sync',
+    );
+  }
+}
+
 /// Parent: set child connection status to disconnected (when parent removes child).
 Future<void> setChildConnectionStatusFirebase(String parentId, String childId, String status) async {
+  final disconnectHook = debugSetChildConnectionStatusFirebaseForTests;
+  if (disconnectHook != null) {
+    await disconnectHook(parentId, childId, status);
+    return;
+  }
   final ref = _childDocRef(parentId, childId);
   final updates = <String, dynamic>{
     _kConnectionStatus: status,
@@ -133,17 +732,166 @@ Future<void> setChildConnectionStatusFirebase(String parentId, String childId, S
 }
 
 /// Parent: update blocked packages for a child in Firebase and local.
-Future<void> syncBlockedPackagesToFirebase(String parentId, String childId, List<String> packages) async {
-  developer.log('Blocked apps synced: childId=$childId count=${packages.length}', name: 'Sync');
-  await setBlockedPackagesForChild(childId, packages);
-  await _childDocRef(parentId, childId).update({
-    _kBlockedPackages: packages,
+Future<void> syncBlockedPackagesToFirebase(
+  String parentId,
+  String childId,
+  List<String> packages,
+) async {
+  final normalizedPackages = _normalizePackageNames(packages);
+  debugPrint(
+    '[GenetDebug] PARENT ID: $parentId | SELECTED CHILD ID: $childId | WRITE PATH: genet_parents/$parentId/children/$childId | BLOCKED APPS COUNT: ${normalizedPackages.length}',
+  );
+  developer.log('Blocked apps synced: childId=$childId count=${normalizedPackages.length}', name: 'Sync');
+  await setBlockedPackagesForChild(childId, normalizedPackages);
+  final ref = _childDocRef(parentId, childId);
+  final snap = await ref.get();
+  if (snap.exists) {
+    final cur = (snap.data()![_kBlockedPackages] as List?)?.cast<String>() ?? [];
+    final a = List<String>.from(cur)..sort();
+    final b = List<String>.from(normalizedPackages)..sort();
+    if (listEquals(a, b)) {
+      debugPrint('[GenetVpn] skipped duplicate update (blockedPackages unchanged in Firestore)');
+      debugPrint('[GenetBlocked] duplicate firebase write prevented');
+      return;
+    }
+  }
+  await ref.update({
+    _kBlockedPackages: normalizedPackages,
     _kUpdatedAt: FieldValue.serverTimestamp(),
   });
 }
 
+/// Parent: remote VPN policy for the child device (actual VPN runs on child only).
+/// Uses [set] with merge so writes succeed even if the doc was missing (unlike [update]).
+Future<void> syncVpnPolicyToFirebase(String parentId, String childId, {required bool vpnEnabled}) async {
+  final path = _childDocRef(parentId, childId).path;
+  try {
+    if (vpnEnabled) {
+      final pkgs = await getBlockedPackagesForChild(childId);
+      await setBlockedPackagesForChild(childId, pkgs);
+      developer.log(
+        'parent wrote vpnEnabled=true for childId=$childId blocked=${pkgs.length}',
+        name: 'GenetVpn',
+      );
+      debugPrint('[GenetVpn] parent wrote vpnEnabled=true');
+      debugPrint('[GenetVpn] writing blockedPackages=$pkgs');
+      await _childDocRef(parentId, childId).set({
+        _kBlockedPackages: pkgs,
+        _kVpnEnabled: true,
+        _kUpdatedAt: FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } else {
+      developer.log('parent wrote vpnEnabled=false for childId=$childId', name: 'GenetVpn');
+      debugPrint('[GenetVpn] parent wrote vpnEnabled=false');
+      await _childDocRef(parentId, childId).set({
+        _kVpnEnabled: false,
+        _kUpdatedAt: FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    }
+  } catch (e, st) {
+    debugPrint('[GenetVpn] syncVpnPolicyToFirebase FAILED path=$path error=$e $st');
+    rethrow;
+  }
+}
+
+// =============================================================================
+// === Parent messages (child_settings) ===
+// =============================================================================
+List<ParentMessage> parentMessageHistoryFromChildSettings(
+  Map<String, dynamic>? data,
+) {
+  if (data == null) return const <ParentMessage>[];
+  final messages = <ParentMessage>[];
+  final rawHistory = data[_kParentMessages];
+  if (rawHistory is List) {
+    for (final entry in rawHistory) {
+      if (entry is Map) {
+        final parsed = ParentMessage.fromMap(Map<String, dynamic>.from(entry));
+        if (parsed.hasContent) {
+          messages.add(parsed);
+        }
+      }
+    }
+  }
+  final legacySingle = data['parentMessage'];
+  if (messages.isEmpty && legacySingle is Map) {
+    final parsed = ParentMessage.fromMap(Map<String, dynamic>.from(legacySingle));
+    if (parsed.hasContent) {
+      messages.add(parsed);
+    }
+  }
+  messages.sort((a, b) => a.updatedAt.compareTo(b.updatedAt));
+  return messages;
+}
+
+ParentMessage? latestParentMessageFromChildSettings(Map<String, dynamic>? data) {
+  final history = parentMessageHistoryFromChildSettings(data);
+  if (history.isEmpty) return null;
+  return history.last;
+}
+
+Future<ParentMessage> addParentMessageToFirebase(
+  String childId, {
+  required String text,
+}) async {
+  final message = ParentMessage.create(text);
+  if (childId.isEmpty || !message.hasContent) return message;
+  final ref = _childSettingsDocRef(childId);
+  await FirebaseFirestore.instance.runTransaction((transaction) async {
+    final snap = await transaction.get(ref);
+    final current = parentMessageHistoryFromChildSettings(snap.data());
+    final updated = [...current, message];
+    final trimmed =
+        updated.length > 40 ? updated.sublist(updated.length - 40) : updated;
+    transaction.set(
+      ref,
+      {
+        _kParentMessages: trimmed.map((entry) => entry.toMap()).toList(),
+        'parentMessage': FieldValue.delete(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+  });
+  return message;
+}
+
+// =============================================================================
+// === Child device: VPN status reported to parent child doc ===
+// =============================================================================
+/// Child device: report VPN outcome to the same child doc (parent reads [vpnStatus]).
+Future<void> syncChildVpnStatusToFirebase(
+  String parentId,
+  String childId,
+  String vpnStatus, {
+  String? vpnStatusMessage,
+}) async {
+  final path = _childDocRef(parentId, childId).path;
+  final m = <String, dynamic>{
+    _kVpnStatus: vpnStatus,
+    _kUpdatedAt: FieldValue.serverTimestamp(),
+  };
+  if (vpnStatusMessage != null) {
+    m[_kVpnStatusMessage] = vpnStatusMessage;
+  } else {
+    m[_kVpnStatusMessage] = FieldValue.delete();
+  }
+  try {
+    debugPrint('[GenetVpn] child writing path=$path vpnStatus=$vpnStatus msg=$vpnStatusMessage');
+    await _childDocRef(parentId, childId).set(m, SetOptions(merge: true));
+  } catch (e, st) {
+    debugPrint('[GenetVpn] syncChildVpnStatusToFirebase FAILED path=$path error=$e $st');
+  }
+}
+
+// =============================================================================
+// === Extension approved map (parent write) ===
+// =============================================================================
 /// Parent: update extension approved map in Firebase and local.
 Future<void> syncExtensionApprovedToFirebase(String parentId, String childId, Map<String, int> map) async {
+  debugPrint(
+    '[GenetExtReq] parent approved write path=genet_parents/$parentId/children/$childId childId=$childId',
+  );
   developer.log('Extension approved synced: childId=$childId', name: 'Sync');
   await setExtensionApprovedForChild(childId, map);
   final data = map.map((k, v) => MapEntry(k, v));
@@ -153,31 +901,58 @@ Future<void> syncExtensionApprovedToFirebase(String parentId, String childId, Ma
   });
 }
 
-/// Child doc snapshot to local state.
-void _applyChildDocToLocal(String childId, Map<String, dynamic>? data) {
+// =============================================================================
+// === Child doc → local prefs + snapshot parsing helpers ===
+// =============================================================================
+/// Child doc snapshot to local state (await prefs so merge finishes before next snapshot consumer).
+Future<void> _applyChildDocToLocalAsync(
+  String childId,
+  Map<String, dynamic>? data,
+) async {
   if (data == null) return;
   final blocked = (data[_kBlockedPackages] as List?)?.cast<String>() ?? [];
-  final approvedRaw = data[_kExtensionApproved] as Map<String, dynamic>?;
+  final approved = _parseExtensionApprovedMap(data);
+  await setBlockedPackagesForChild(childId, blocked);
+  await setExtensionApprovedForChild(childId, approved);
+  final requestsList = data[_kExtensionRequests] as List?;
+  if (requestsList != null) {
+    final requests = _parseExtensionRequests(data);
+    final current = await getExtensionRequests();
+    final byOther = current.where((r) => r.childId != childId).toList();
+    await saveExtensionRequests([...byOther, ...requests]);
+  }
+}
+
+Map<String, int> _parseExtensionApprovedMap(Map<String, dynamic>? data) {
+  final approvedRaw = data?[_kExtensionApproved] as Map<String, dynamic>?;
   final approved = <String, int>{};
   if (approvedRaw != null) {
     for (final e in approvedRaw.entries) {
       final v = e.value;
-      if (v is int) approved[e.key] = v;
-      else if (v is num) approved[e.key] = v.toInt();
+      if (v is int) {
+        approved[e.key] = v;
+      } else if (v is num) {
+        approved[e.key] = v.toInt();
+      }
     }
   }
-  setBlockedPackagesForChild(childId, blocked);
-  setExtensionApprovedForChild(childId, approved);
-  final requestsList = data[_kExtensionRequests] as List?;
-  if (requestsList != null) {
-    final requests = requestsList
-        .map((e) => ExtensionRequest.fromJson(Map<String, dynamic>.from(e as Map)))
-        .toList();
-    getExtensionRequests().then((current) {
-      final byOther = current.where((r) => r.childId != childId).toList();
-      saveExtensionRequests([...byOther, ...requests]);
-    });
-  }
+  return approved;
+}
+
+List<ExtensionRequest> _parseExtensionRequests(Map<String, dynamic>? data) {
+  final reqList = (data?[_kExtensionRequests] as List?) ?? [];
+  return reqList
+      .map((e) => ExtensionRequest.fromJson(Map<String, dynamic>.from(e as Map)))
+      .toList();
+}
+
+Map<String, int> _extensionApprovedMapFromFirestoreData(Map<String, dynamic> data) {
+  return Map<String, int>.from(
+    (data[_kExtensionApproved] as Map<String, dynamic>?)?.map(
+          (k, v) => MapEntry(k, v is int ? v : (v as num).toInt()),
+        ) ??
+        {},
+  );
 }
 
 /// Parsed child doc for UI (child device).
@@ -188,25 +963,66 @@ class SyncedChildData {
     this.extensionRequests = const [],
     this.connectionStatus = 'connected',
     this.parentId,
+    this.vpnEnabled = false,
+    this.vpnStatus,
   });
   final List<String> blockedPackages;
   final Map<String, int> extensionApproved;
   final List<ExtensionRequest> extensionRequests;
   final String connectionStatus;
   final String? parentId;
+  final bool vpnEnabled;
+  /// Last status written by child device: on | off | error
+  final String? vpnStatus;
 }
 
+SyncedChildData _mapSyncedChildData(Map<String, dynamic> data) {
+  final blocked = (data[_kBlockedPackages] as List?)?.cast<String>() ?? [];
+  final approved = _parseExtensionApprovedMap(data);
+  final requests = _parseExtensionRequests(data);
+  final status = data[_kConnectionStatus] as String? ?? _kConnected;
+  final parentId = data[_kParentId] as String?;
+  final vpnEnabled = data[_kVpnEnabled] == true;
+  final vpnStatus = data[_kVpnStatus] as String?;
+  developer.log(
+    'Child data loaded: blocked=${blocked.length} approved=${approved.length} requests=${requests.length} vpnEnabled=$vpnEnabled vpnStatus=$vpnStatus',
+    name: 'Sync',
+  );
+  return SyncedChildData(
+    blockedPackages: blocked,
+    extensionApproved: approved,
+    extensionRequests: requests,
+    connectionStatus: status,
+    parentId: parentId,
+    vpnEnabled: vpnEnabled,
+    vpnStatus: vpnStatus,
+  );
+}
+
+// =============================================================================
+// === Streams: child doc, synced model, parent views, children list ===
+// =============================================================================
 /// Stream child doc from Firebase (for child device). Updates local when data arrives.
 Stream<Map<String, dynamic>?> watchChildDocStream(String parentId, String childId) {
   if (parentId.isEmpty || childId.isEmpty) return Stream.value(null);
   final ref = _childDocRef(parentId, childId);
   developer.log('CHILD_READ_PATH = ${ref.path}', name: 'Sync');
   developer.log('CHILD_READ_CHILD_ID = $childId', name: 'Sync');
-  return ref.snapshots().map((snap) {
-    if (!snap.exists) return null;
+  return ref.snapshots().asyncMap((snap) async {
+    if (!snap.exists) {
+      debugPrint(
+        '[GenetDebug] CHILD ID: $childId | READ PATH: ${ref.path} | SNAPSHOT: missing',
+      );
+      return null;
+    }
     final data = snap.data();
+    debugPrint(
+      '[GenetDebug] CHILD ID: $childId | READ PATH: ${ref.path} | CONNECTION STATUS: ${data?[_kConnectionStatus]} | BLOCKED APPS COUNT: ${(data?[_kBlockedPackages] as List?)?.length ?? 0}',
+    );
     developer.log('CHILD_READ_DOC_DATA = parentId=${data?[_kParentId]} connectionStatus=${data?[_kConnectionStatus]}', name: 'Sync');
-    _applyChildDocToLocal(childId, data);
+    await _applyChildDocToLocalAsync(childId, data);
+    // Remote parent (other device) updated Firestore — push policy to Android enforcement on child device only.
+    scheduleMicrotask(() => GenetConfig.syncToNativeAfterRemoteChildDoc());
     return data;
   });
 }
@@ -215,41 +1031,16 @@ Stream<Map<String, dynamic>?> watchChildDocStream(String parentId, String childI
 Stream<SyncedChildData?> watchSyncedChildDataStream(String parentId, String childId) {
   return watchChildDocStream(parentId, childId).map((data) {
     if (data == null) return null;
-    final blocked = (data[_kBlockedPackages] as List?)?.cast<String>() ?? [];
-    final approvedRaw = data[_kExtensionApproved] as Map<String, dynamic>?;
-    final approved = <String, int>{};
-    if (approvedRaw != null) {
-      for (final e in approvedRaw.entries) {
-        final v = e.value;
-        if (v is int) approved[e.key] = v;
-        else if (v is num) approved[e.key] = v.toInt();
-      }
-    }
-    final reqList = (data[_kExtensionRequests] as List?) ?? [];
-    final requests = reqList
-        .map((e) => ExtensionRequest.fromJson(Map<String, dynamic>.from(e as Map)))
-        .toList();
-    final status = data[_kConnectionStatus] as String? ?? _kConnected;
-    final parentId = data[_kParentId] as String?;
-    developer.log('Child data loaded: blocked=${blocked.length} approved=${approved.length} requests=${requests.length}', name: 'Sync');
-    return SyncedChildData(
-      blockedPackages: blocked,
-      extensionApproved: approved,
-      extensionRequests: requests,
-      connectionStatus: status,
-      parentId: parentId,
-    );
+    return _mapSyncedChildData(data);
   });
 }
 
 /// Parent: stream single child doc (for selected child).
 Stream<Map<String, dynamic>?> watchParentChildDocStream(String parentId, String childId) {
   if (parentId.isEmpty || childId.isEmpty) return Stream.value(null);
-  return _childDocRef(parentId, childId).snapshots().map((snap) {
+  return _childDocRef(parentId, childId).snapshots().asyncMap((snap) async {
     if (!snap.exists) return null;
-    final data = snap.data();
-    _applyChildDocToLocal(childId, data);
-    return data;
+    return snap.data();
   });
 }
 
@@ -297,23 +1088,48 @@ Stream<List<ChildEntity>> watchParentChildrenStream(String parentId) async* {
   }
 }
 
+// =============================================================================
+// === Extension requests: child create, parent update/cancel ===
+// =============================================================================
 /// Child: add extension request to Firebase (and local).
 Future<void> addExtensionRequestToFirebase(
   String parentId,
   String childId,
   ExtensionRequest request,
 ) async {
+  debugPrint(
+    '[GenetExtReq] child request write path=genet_parents/$parentId/children/$childId childId=$childId',
+  );
   developer.log('Extension request created: package=${request.packageName}', name: 'Sync');
   final ref = _childDocRef(parentId, childId);
-  final current = await ref.get();
-  final list = List<Map<String, dynamic>>.from(
-    (current.data()?[_kExtensionRequests] as List?) ?? [],
+  debugPrint(
+    '[GenetExtReq] extension request write started path=${ref.path} childId used=$childId requestId=${request.id}',
   );
-  list.add(request.toJson());
-  await ref.update({
-    _kExtensionRequests: list,
-    _kUpdatedAt: FieldValue.serverTimestamp(),
-  });
+  try {
+    await FirebaseFirestore.instance.runTransaction((transaction) async {
+      final snap = await transaction.get(ref);
+      if (!snap.exists) {
+        debugPrint('[GenetExtReq] wrong path / missing document path=${ref.path}');
+        return;
+      }
+      final list = List<Map<String, dynamic>>.from(
+        (snap.data()![_kExtensionRequests] as List?) ?? [],
+      );
+      if (list.any((e) => (e['id'] as String?) == request.id)) {
+        debugPrint('[GenetExtReq] duplicate request skipped requestId=${request.id} path=${ref.path}');
+        return;
+      }
+      list.add(request.toJson());
+      transaction.update(ref, {
+        _kExtensionRequests: list,
+        _kUpdatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+  } catch (e, st) {
+    debugPrint('[GenetExtReq] extension request write failed path=${ref.path} error=$e $st');
+    rethrow;
+  }
+  debugPrint('[GenetExtReq] extension request write success path=${ref.path} requestId=${request.id}');
   final all = await getExtensionRequests();
   all.add(request);
   await saveExtensionRequests(all);
@@ -333,6 +1149,9 @@ Future<void> updateExtensionRequestInFirebase(
   } else if (status == ExtensionRequestStatus.rejected) {
     developer.log('Extension rejected: requestId=$requestId', name: 'Sync');
   }
+  debugPrint(
+    '[GenetExtReq] parent status write path=genet_parents/$parentId/children/$childId childId=$childId',
+  );
   final ref = _childDocRef(parentId, childId);
   final snap = await ref.get();
   final data = snap.data();
@@ -343,9 +1162,7 @@ Future<void> updateExtensionRequestInFirebase(
   var idx = list.indexWhere((e) => (e['id'] as String?) == requestId);
   if (idx >= 0) list[idx] = {...list[idx], 'status': status};
 
-  final approved = Map<String, int>.from(
-    (data[_kExtensionApproved] as Map<String, dynamic>?)?.map((k, v) => MapEntry(k, v is int ? v : (v as num).toInt())) ?? {},
-  );
+  final approved = _extensionApprovedMapFromFirestoreData(data);
   if (status == ExtensionRequestStatus.approved && approvedUntilMs != null && packageName != null) {
     approved[packageName] = approvedUntilMs;
   }
@@ -369,18 +1186,180 @@ Future<void> updateExtensionRequestInFirebase(
 
 /// Parent: cancel extension (remove from approved map) in Firebase.
 Future<void> cancelExtensionInFirebase(String parentId, String childId, String packageName) async {
+  debugPrint(
+    '[GenetExtReq] parent cancel write path=genet_parents/$parentId/children/$childId childId=$childId',
+  );
   developer.log('Extension cancelled: package=$packageName', name: 'Sync');
   final ref = _childDocRef(parentId, childId);
   final snap = await ref.get();
   final data = snap.data();
   if (data == null) return;
-  final approved = Map<String, int>.from(
-    (data[_kExtensionApproved] as Map<String, dynamic>?)?.map((k, v) => MapEntry(k, v is int ? v : (v as num).toInt())) ?? {},
-  );
+  final approved = _extensionApprovedMapFromFirestoreData(data);
   approved.remove(packageName);
   await ref.update({
     _kExtensionApproved: approved,
     _kUpdatedAt: FieldValue.serverTimestamp(),
   });
   await setExtensionApprovedForChild(childId, approved);
+}
+
+// =============================================================================
+// === Remote child_settings: sleep lock, requireVpn, messages, trusted time ===
+// =============================================================================
+// --- Remote Sleep Lock (cross-device): child_settings/{childId}/sleep_lock/settings ---
+
+const String _kChildSettingsCollection = 'child_settings';
+const String _kSleepLockSubcollection = 'sleep_lock';
+const String _kSleepLockSettingsDoc = 'settings';
+const String _kRequireVpn = 'requireVpn';
+const String _kParentMessages = 'parentMessages';
+
+DocumentReference<Map<String, dynamic>> _childSettingsDocRef(String childId) {
+  return FirebaseFirestore.instance
+      .collection(_kChildSettingsCollection)
+      .doc(childId);
+}
+
+DocumentReference<Map<String, dynamic>> _sleepLockDocRef(String childId) {
+  return FirebaseFirestore.instance
+      .collection(_kChildSettingsCollection)
+      .doc(childId)
+      .collection(_kSleepLockSubcollection)
+      .doc(_kSleepLockSettingsDoc);
+}
+
+/// Parent device: write sleep lock for the selected child only (remote sync).
+Future<void> writeSleepLockToFirebase(
+  String childId, {
+  required bool isActive,
+  required String startTime,
+  required String endTime,
+}) async {
+  if (childId.isEmpty) return;
+  final path = '$_kChildSettingsCollection/$childId/$_kSleepLockSubcollection/$_kSleepLockSettingsDoc';
+  developer.log('SLEEP_LOCK parent write selectedChildId=$childId path=$path isActive=$isActive start=$startTime end=$endTime', name: 'Sync');
+  await _sleepLockDocRef(childId).set(
+    {
+      'isActive': isActive,
+      'startTime': startTime,
+      'endTime': endTime,
+      'updatedAt': FieldValue.serverTimestamp(),
+    },
+    SetOptions(merge: true),
+  );
+  await _childSettingsDocRef(childId).set(
+    {
+      'sleepLock': {
+        'isActive': isActive,
+        'startTime': startTime,
+        'endTime': endTime,
+      },
+      'updatedAt': FieldValue.serverTimestamp(),
+    },
+    SetOptions(merge: true),
+  );
+}
+
+/// One-shot read (e.g. parent Sleep Lock screen open).
+Future<Map<String, dynamic>?> getSleepLockFromFirebase(String childId) async {
+  if (childId.isEmpty) return null;
+  final snap = await _sleepLockDocRef(childId).get();
+  if (!snap.exists) return null;
+  return snap.data();
+}
+
+/// Child device: real-time sleep lock from Firebase (same [childId] as [getLinkedChildId]).
+Stream<Map<String, dynamic>?> watchChildSleepLockStream(String childId) {
+  if (childId.isEmpty) return Stream.value(null);
+  final path = '$_kChildSettingsCollection/$childId/$_kSleepLockSubcollection/$_kSleepLockSettingsDoc';
+  developer.log('SLEEP_LOCK child listen childId=$childId path=$path', name: 'Sync');
+  return _sleepLockDocRef(childId).snapshots().map((snap) {
+    if (!snap.exists) {
+      developer.log('SLEEP_LOCK child snapshot: no doc', name: 'Sync');
+      return null;
+    }
+    final d = snap.data();
+    developer.log(
+      'SLEEP_LOCK child snapshot received isActive=${d?['isActive']} start=${d?['startTime']} end=${d?['endTime']}',
+      name: 'Sync',
+    );
+    return d;
+  });
+}
+
+Future<void> writeRequireVpnToFirebase(String childId, {required bool requireVpn}) async {
+  if (childId.isEmpty) return;
+  final path = '$_kChildSettingsCollection/$childId';
+  developer.log(
+    'REQUIRE_VPN parent write childId=$childId path=$path requireVpn=$requireVpn',
+    name: 'Sync',
+  );
+  await _childSettingsDocRef(childId).set(
+    {
+      _kRequireVpn: requireVpn,
+      'updatedAt': FieldValue.serverTimestamp(),
+    },
+    SetOptions(merge: true),
+  );
+}
+
+// --- VPN requirement: single compatibility interpretation (child_settings ∪ child doc) ---
+bool resolveRequireVpn({
+  Map<String, dynamic>? childSettingsData,
+  SyncedChildData? syncedChildData,
+}) {
+  final fromChildSettings = childSettingsData?[_kRequireVpn] == true;
+  final fromParentPolicy = syncedChildData?.vpnEnabled == true;
+  return fromChildSettings || fromParentPolicy;
+}
+
+Future<bool> getRequireVpnFromFirebase(String childId) async {
+  if (childId.isEmpty) return false;
+  final snap = await _childSettingsDocRef(childId).get();
+  return resolveRequireVpn(childSettingsData: snap.data());
+}
+
+Future<List<ParentMessage>> getParentMessageHistoryFromFirebase(
+  String childId,
+) async {
+  if (childId.isEmpty) return const <ParentMessage>[];
+  final snap = await _childSettingsDocRef(childId).get();
+  return parentMessageHistoryFromChildSettings(snap.data());
+}
+
+DocumentReference<Map<String, dynamic>> _trustedTimeDocRef(String childId) {
+  return _childSettingsDocRef(childId).collection('trusted_time').doc('reference');
+}
+
+Future<DateTime?> fetchTrustedTimeFromFirebase(String childId) async {
+  if (childId.isEmpty) return null;
+  final ref = _trustedTimeDocRef(childId);
+  try {
+    await ref.set({
+      'serverNow': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    final snap = await ref.get(const GetOptions(source: Source.server));
+    final raw = snap.data()?['serverNow'];
+    if (raw is Timestamp) {
+      return raw.toDate();
+    }
+  } catch (_) {
+    return null;
+  }
+  return null;
+}
+
+Stream<Map<String, dynamic>?> watchChildSettingsStream(String childId) {
+  if (childId.isEmpty) return Stream.value(null);
+  final path = '$_kChildSettingsCollection/$childId';
+  developer.log('CHILD_SETTINGS child listen childId=$childId path=$path', name: 'Sync');
+  return _childSettingsDocRef(childId).snapshots().map((snap) {
+    final d = snap.data();
+    developer.log(
+      'CHILD_SETTINGS source=Firebase childId=$childId requireVpn=${d?[_kRequireVpn] == true} sleepLockActive=${(d?['sleepLock'] as Map?)?['isActive']}',
+      name: 'Sync',
+    );
+    return d;
+  });
 }

@@ -1,15 +1,20 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'dart:io' show Platform;
 
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../debug_firebase_state.dart';
 import '../core/config/genet_config.dart';
 import '../repositories/child_link_status_repository.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../repositories/pending_link_repository.dart';
+import '../services/relevant_installed_apps_engine.dart';
 import 'child_home_screen.dart';
 
 /// Child device: link to parent by scanning QR (payload = 4-digit code) or entering 4-digit manual code.
@@ -25,6 +30,14 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
   final _codeController = TextEditingController();
   String? _error;
   bool _linking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (kDebugMode) {
+      debugFirebaseState();
+    }
+  }
 
   @override
   void dispose() {
@@ -54,6 +67,9 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
     final existingId = await getLocalChildId();
     final childId = existingId ?? generateChildId();
     final name = [firstName, lastName].join(' ').trim();
+    String? attemptParentId;
+    String? attemptChildId;
+    String? attemptLinkCode;
     setState(() => _linking = true);
     try {
       await writeChildProfileToPendingLink(
@@ -76,6 +92,9 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
         if (mounted) setState(() => _linking = false);
         return;
       }
+      attemptParentId = parentId;
+      attemptChildId = childId;
+      attemptLinkCode = code;
       // Update the SAME child document the Child screen reads (genet_parents/{parentId}/children/{childId}).
       // This ensures connection state is written even if parent device did not run _onChildLinked yet.
       final childDocPath = 'genet_parents/$parentId/children/$childId';
@@ -95,6 +114,31 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
         linkCode: code,
       );
       developer.log('CHILD_DOC_AFTER_CONNECT = written (parentId + connectionStatus)', name: 'Sync');
+      final canonicalOk = await waitForCanonicalChildConnected(
+        parentId: parentId,
+        childId: childId,
+      );
+      if (!canonicalOk) {
+        developer.log(
+          'Manual code connection: canonical child doc not confirmed (timeout or invalid)',
+          name: 'Sync',
+        );
+        await reconcileFalseRemoteConnectedAfterIncompleteChildLink(
+          parentId: parentId,
+          childId: childId,
+          linkCode: code,
+        );
+        if (mounted) {
+          setState(() {
+            _linking = false;
+            _error = kDebugMode
+                ? 'Canonical link not confirmed (timeout). Try again.'
+                : 'החיבור לא אושר אצל ההורה. נסה שוב.';
+          });
+        }
+        return;
+      }
+      if (!mounted) return;
       await setLinkedParentId(parentId);
       await setLinkedChild(
         childId,
@@ -102,6 +146,16 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
         firstName: firstName,
         lastName: lastName,
       );
+      debugPrint('[RELEVANT_APPS] parentId=$parentId');
+      debugPrint('[RELEVANT_APPS] childId=$childId');
+      if (Platform.isAndroid) {
+        await RelevantInstalledAppsEngine.instance.refreshFromFullDeviceScanAndSync(
+          childId: childId,
+          parentId: parentId,
+          mutationSource: 'child_link',
+          syncTrigger: 'child_linked',
+        );
+      }
       await setChildLinkStatusLinked(childId);
       GenetConfig.syncToNative();
       if (!mounted) return;
@@ -111,10 +165,26 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
         MaterialPageRoute(builder: (_) => const ChildHomeScreen()),
       );
     } catch (e) {
+      if (attemptParentId != null &&
+          attemptChildId != null &&
+          attemptLinkCode != null) {
+        await reconcileFalseRemoteConnectedAfterIncompleteChildLink(
+          parentId: attemptParentId,
+          childId: attemptChildId,
+          linkCode: attemptLinkCode,
+        );
+      }
+      if (e is FirebaseException) {
+        debugPrint('[GENET][LINK_CHILD][ERROR] code=${e.code} message=${e.message}');
+      } else {
+        debugPrint('[GENET][LINK_CHILD][ERROR] unknown=$e');
+      }
       if (mounted) {
         setState(() {
           _linking = false;
-          _error = 'שגיאה בחיבור. נסה שוב.';
+          _error = kDebugMode
+              ? 'Error: ${e is FirebaseException ? e.code : e.toString()}'
+              : 'שגיאה בחיבור. נסה שוב.';
         });
       }
     }

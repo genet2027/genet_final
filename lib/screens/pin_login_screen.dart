@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/config/genet_config.dart';
+import '../core/user_role.dart';
 import '../core/pin_storage.dart';
 import '../theme/app_theme.dart';
 import 'parent_shell.dart';
@@ -26,7 +27,7 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
 
     if (ok) {
       if (Platform.isAndroid) GenetConfig.setPin(enteredPin);
-      GenetConfig.setChildMode(false);
+      await GenetConfig.commitUserRole(kUserRoleParent);
       if (mounted) {
         Navigator.pushReplacement(
           context,

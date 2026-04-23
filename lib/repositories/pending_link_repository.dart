@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
+import '../core/firebase_auth_guard.dart';
 import '../models/child_entity.dart';
 import 'children_repository.dart';
 
@@ -18,6 +20,22 @@ const String _kSchoolCode = 'schoolCode';
 const String _kLinkedAt = 'linkedAt';
 const String _kParentId = 'parentId';
 
+Future<void> _pendingLinkFirestoreWrite(Future<void> Function() write) async {
+  requireFirebaseUser();
+  debugPrint('[GENET][LINK_CHILD] Attempting to write pending link');
+  try {
+    await write();
+    debugPrint('[GENET][LINK_CHILD] Write success');
+  } catch (e) {
+    if (e is FirebaseException) {
+      debugPrint('[GENET][LINK_CHILD][ERROR] code=${e.code} message=${e.message}');
+    } else {
+      debugPrint('[GENET][LINK_CHILD][ERROR] unknown=$e');
+    }
+    rethrow;
+  }
+}
+
 /// Parent: create a pending connection with a 4-digit code. Returns the code.
 /// [parentId] is written so child can read it after connecting.
 Future<String> createPendingLink({String? parentId}) async {
@@ -27,15 +45,19 @@ Future<String> createPendingLink({String? parentId}) async {
     _kCreatedAt: FieldValue.serverTimestamp(),
   };
   if (parentId != null && parentId.isNotEmpty) data[_kParentId] = parentId;
-  await FirebaseFirestore.instance.collection(_kCollection).doc(code).set(data);
+  await _pendingLinkFirestoreWrite(
+    () => FirebaseFirestore.instance.collection(_kCollection).doc(code).set(data),
+  );
   return code;
 }
 
 /// Parent: write parentId to pending link doc so child device can read it after connecting.
 Future<void> setPendingLinkParentId(String code, String parentId) async {
-  await FirebaseFirestore.instance.collection(_kCollection).doc(code).update({
-    _kParentId: parentId,
-  });
+  await _pendingLinkFirestoreWrite(
+    () => FirebaseFirestore.instance.collection(_kCollection).doc(code).update({
+      _kParentId: parentId,
+    }),
+  );
 }
 
 /// Child: get parentId from pending link doc (after child has written profile). Returns null until parent writes it.
@@ -108,15 +130,17 @@ Future<void> writeChildProfileToPendingLink(
   int age,
   String schoolCode,
 ) async {
-  await FirebaseFirestore.instance.collection(_kCollection).doc(code).update({
-    _kStatus: _kLinked,
-    _kChildId: childId,
-    _kFirstName: firstName,
-    _kLastName: lastName,
-    _kAge: age,
-    _kSchoolCode: schoolCode,
-    _kLinkedAt: FieldValue.serverTimestamp(),
-  });
+  await _pendingLinkFirestoreWrite(
+    () => FirebaseFirestore.instance.collection(_kCollection).doc(code).update({
+      _kStatus: _kLinked,
+      _kChildId: childId,
+      _kFirstName: firstName,
+      _kLastName: lastName,
+      _kAge: age,
+      _kSchoolCode: schoolCode,
+      _kLinkedAt: FieldValue.serverTimestamp(),
+    }),
+  );
 }
 
 /// Check if a code exists and is still pending (parent created it, child not yet linked).

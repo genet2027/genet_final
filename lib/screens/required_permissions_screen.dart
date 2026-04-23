@@ -44,12 +44,13 @@ class _RequiredPermissionsScreenState extends State<RequiredPermissionsScreen> w
 
   Future<void> _check() async {
     final list = await GenetConfig.getMissingPermissions();
+    final filtered = list.where((e) => e != 'accessibility').toList();
     if (mounted) {
       setState(() {
-        _missing = list;
+        _missing = filtered;
         _loading = false;
       });
-      if (list.isEmpty) {
+      if (filtered.isEmpty) {
         widget.onDismiss?.call();
         Navigator.of(context).pop();
       }
@@ -59,9 +60,7 @@ class _RequiredPermissionsScreenState extends State<RequiredPermissionsScreen> w
   Future<void> _openFirstMissing() async {
     if (_missing.isEmpty) return;
     final first = _missing.first;
-    if (first == 'accessibility') {
-      await GenetConfig.openAccessibilitySettings();
-    } else if (first == 'overlay') {
+    if (first == 'overlay') {
       await GenetConfig.openOverlaySettings();
     } else if (first == 'usage') {
       await GenetConfig.openUsageAccessSettings();
@@ -131,13 +130,13 @@ class _RequiredPermissionsScreenState extends State<RequiredPermissionsScreen> w
                 Icon(Icons.warning_amber_rounded, size: 64, color: Colors.orange.shade700),
                 const SizedBox(height: 16),
                 const Text(
-                  'חובה להפעיל הרשאות',
+                  'הרשאות מערכת',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'האפליקציה דורשת הרשאות נגישות, גישה לשימוש והצגה מעל אפליקציות.',
+                  'חסימה מבוססת VPN. כשהן חסרות, יש להפעיל גישה לשימוש והצגה מעל אפליקציות.',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
                 ),
@@ -174,7 +173,6 @@ class _RequiredPermissionsScreenState extends State<RequiredPermissionsScreen> w
   }
 
   String _label(String key) {
-    if (key == 'accessibility') return 'נגישות (Accessibility)';
     if (key == 'overlay') return 'הצגה מעל אפליקציות (Overlay)';
     if (key == 'usage') return 'גישה לשימוש (Usage Access)';
     return key;

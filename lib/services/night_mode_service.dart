@@ -48,10 +48,22 @@ class NightModeService extends ChangeNotifier {
   /// Whether current time is inside the night window (start..end, crossing midnight).
   bool isNightTimeNow() {
     if (!_config.enabled) return false;
-    final now = DateTime.now();
-    final start = _parseTime(_config.startTime);
-    final end = _parseTime(_config.endTime);
-    final nowMinutes = now.hour * 60 + now.minute;
+    return isWithinWindow(
+      startTime: _config.startTime,
+      endTime: _config.endTime,
+      currentTime: DateTime.now(),
+    );
+  }
+
+  /// Shared source of truth for sleep-lock/night window math across the app.
+  static bool isWithinWindow({
+    required String startTime,
+    required String endTime,
+    required DateTime currentTime,
+  }) {
+    final start = _parseTimeParts(startTime);
+    final end = _parseTimeParts(endTime);
+    final nowMinutes = currentTime.hour * 60 + currentTime.minute;
     final startMinutes = start.$1 * 60 + start.$2;
     final endMinutes = end.$1 * 60 + end.$2;
     if (startMinutes > endMinutes) {
@@ -61,7 +73,7 @@ class NightModeService extends ChangeNotifier {
     return nowMinutes >= startMinutes && nowMinutes < endMinutes;
   }
 
-  (int, int) _parseTime(String s) {
+  static (int, int) _parseTimeParts(String s) {
     final parts = s.split(':');
     final h = parts.isNotEmpty ? int.tryParse(parts[0]) ?? 0 : 0;
     final m = parts.length > 1 ? int.tryParse(parts[1]) ?? 0 : 0;
@@ -72,8 +84,8 @@ class NightModeService extends ChangeNotifier {
   /// 22:00–24:00 → today; 00:00–07:00 → yesterday.
   String _currentNightDate() {
     final now = DateTime.now();
-    final start = _parseTime(_config.startTime);
-    final end = _parseTime(_config.endTime);
+    final start = _parseTimeParts(_config.startTime);
+    final end = _parseTimeParts(_config.endTime);
     final nowMinutes = now.hour * 60 + now.minute;
     final startMinutes = start.$1 * 60 + start.$2;
     final endMinutes = end.$1 * 60 + end.$2;

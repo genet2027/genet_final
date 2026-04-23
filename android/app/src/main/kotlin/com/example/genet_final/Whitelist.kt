@@ -17,7 +17,18 @@ import android.telecom.TelecomManager
  */
 object Whitelist {
 
+    /** Must match [android/app/build.gradle.kts] `defaultConfig.applicationId` (currently `com.example.genet_final`). */
     private const val GENET_PACKAGE = "com.example.genet_final"
+
+    /**
+     * All known Genet applicationIds (debug/release, alternate Firebase app ids).
+     * Includes [GENET_PACKAGE] from build.gradle; extend when adding flavors/productFlavors.
+     * Also see [android/app/google-services.json] package_name entries.
+     */
+    val KNOWN_GENET_APP_IDS: Set<String> = setOf(
+        GENET_PACKAGE,
+        "com.example.genet_mvp",
+    )
 
     /** Hardcoded packages always allowed (emergencies, system). */
     private val ALWAYS_ALLOWED = setOf(
@@ -90,10 +101,19 @@ object Whitelist {
     }
 
     /**
-     * True if the package is Genet (our app).
+     * True if [packageName] is this installed app, a known Genet id, or Flutter embedding (in-process).
+     * Single source of truth for "never treat as external blocked app / never show lock overlay on Genet".
      */
     @JvmStatic
-    fun isGenetApp(packageName: String?): Boolean = packageName == GENET_PACKAGE
+    fun isGenetApp(context: Context, packageName: String?): Boolean {
+        if (packageName.isNullOrEmpty()) return false
+        if (packageName == context.packageName) return true
+        if (packageName.startsWith("io.flutter")) return true
+        if (KNOWN_GENET_APP_IDS.contains(packageName)) return true
+        // Any build flavor / future applicationId that includes "genet" (case-insensitive).
+        if (packageName.lowercase().contains("genet")) return true
+        return false
+    }
 
     /**
      * True if the overlay must not be shown for this package (allow access).
@@ -102,7 +122,7 @@ object Whitelist {
     @JvmStatic
     fun isWhitelisted(context: Context, packageName: String?): Boolean {
         if (packageName.isNullOrEmpty()) return true
-        if (isGenetApp(packageName)) return true
+        if (isGenetApp(context, packageName)) return true
         if (isEssentialSystemApp(packageName)) return true
         if (packageName == getDefaultLauncherPackageName(context)) return true
         if (packageName == getDefaultDialerPackageName(context)) return true

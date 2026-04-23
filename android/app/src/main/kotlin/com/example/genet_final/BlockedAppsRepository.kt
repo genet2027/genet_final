@@ -5,8 +5,9 @@ import android.content.SharedPreferences
 import androidx.core.content.edit
 
 /**
- * Single source of truth for blocked package names. Written by MainActivity (MethodChannel from Flutter)
- * and read by [GenetAccessibilityService] and [AppLockForegroundService].
+ * Native mirror prefs ([PREFS_NAME]) for optional native flows.
+ * **Enforcement blocked list** (Flutter / child mode) lives in [GenetAccessibilityService.PREFS_NAME]
+ * — use [getEnforcementBlockedPackages].
  */
 object BlockedAppsRepository {
     private const val PREFS_NAME = "genet_native_config"
@@ -28,6 +29,17 @@ object BlockedAppsRepository {
             putStringSet(KEY_BLOCKED_PACKAGES, packages.toSet())
             apply()
         }
+    }
+
+    /**
+     * Blocked packages for enforcement (same JSON + rules as [GenetAccessibilityService] / Flutter `setBlockedApps`).
+     */
+    fun getEnforcementBlockedPackages(context: Context): Set<String> {
+        val p = context.applicationContext.getSharedPreferences(
+            GenetAccessibilityService.PREFS_NAME,
+            Context.MODE_PRIVATE,
+        )
+        return GenetAccessibilityService.buildBlockedPackagesSet(context.applicationContext, p)
     }
 
     /** Parent-approved packages that are never locked (whitelist). */
