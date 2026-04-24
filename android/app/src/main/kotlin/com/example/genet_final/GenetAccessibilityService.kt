@@ -246,12 +246,6 @@ class GenetAccessibilityService : AccessibilityService() {
         scheduleDebouncedBlockedHandling(prefs, foregroundPackage)
     }
 
-    /** חסימה רק אם שני התנאים: (A) בתוך חלון שעות (B) ברשימת blockedPackages. */
-    private fun isInBlockedTimeWindow(prefs: android.content.SharedPreferences, startStr: String, endStr: String): Boolean {
-        if (!prefs.getBoolean(KEY_SLEEP_LOCK_ENABLED, false) && !prefs.getBoolean(KEY_NIGHT_MODE_ACTIVE, false)) return false
-        return isInTimeRange(startStr, endStr)
-    }
-
     private fun getBlockedPackagesSet(prefs: android.content.SharedPreferences): Set<String> {
         return buildBlockedPackagesSet(applicationContext, prefs)
     }
