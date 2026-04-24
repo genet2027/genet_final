@@ -12,16 +12,18 @@ permissions:
   contents: read
 
 jobs:
-    Analysis:
-      runs-on:  ubuntu-latest  
-      steps:
-        - uses: actions/checkout@v3
+  Analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-        - name: Analyze with sonarcloud
-          uses: sonarSource/sonarcloud-github-action@v2
-          env:
-            SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }} 
-          with:
-            args: >
-              -Dsonar.projectKey=genet2027_genet_final
-               -Dsonar.organization=genet2027
+      - name: Analyze with SonarCloud
+        uses: SonarSource/sonarcloud-github-action@v2
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=genet2027_genet_final
+            -Dsonar.organization=genet2027
+            -Dsonar.sources=android/app/src/main/kotlin
+            -Dsonar.exclusions=**/*.dart,**/build/**,**/.dart_tool/**,**/ios/**,**/macos/**,**/windows/**,**/linux/**,**/web/**
