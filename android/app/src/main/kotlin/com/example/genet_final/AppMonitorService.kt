@@ -4,7 +4,6 @@ package com.example.genet_final
 // This service is intentionally not started and stops immediately.
 // Active enforcement currently relies on Accessibility + VPN flow instead.
 
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
@@ -16,7 +15,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
-import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import org.json.JSONArray
 import org.json.JSONObject
@@ -35,13 +33,11 @@ class AppMonitorService : Service() {
     private val homeThrottleMs = 450L
     private var lastLockPkg: String? = null
 
-    private val tickRunnable = object : Runnable {
-        override fun run() {
-            if (!running) return
-            runTick()
-            if (running) {
-                handler.postDelayed(this, tickIntervalMs)
-            }
+    private val tickRunnable: Runnable = Runnable {
+        if (!running) return@Runnable
+        runTick()
+        if (running) {
+            handler.postDelayed(tickRunnable, tickIntervalMs)
         }
     }
 
@@ -195,7 +191,9 @@ class AppMonitorService : Service() {
                 val until = approved.optLong(pkg, 0L)
                 if (until > now) base.remove(pkg)
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.w(TAG, "extension_approved_until parse failed; skipping approved removals", e)
+        }
         base.remove(packageName)
         base.removeAll(Whitelist.KNOWN_GENET_APP_IDS)
         return base
@@ -247,17 +245,6 @@ class AppMonitorService : Service() {
             NotificationManager.IMPORTANCE_LOW,
         ).apply { setShowBadge(false) }
         nm.createNotificationChannel(ch)
-    }
-
-    private fun buildNotification(): Notification {
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Genet")
-            .setContentText("Monitoring active apps (child mode)")
-            .setSmallIcon(android.R.drawable.ic_menu_info_details)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .build()
     }
 
     companion object {
