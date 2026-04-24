@@ -11,6 +11,7 @@ import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import com.example.genet_final.config.AppConfig
 
 /**
  * Local VPN: only [NetworkBlocker.resolveEffectiveBlockedPackages] are routed via [Builder.addAllowedApplication];
@@ -90,7 +91,7 @@ class GenetVpnService : VpnService() {
             builder.addAddress(VPN_ADDRESS, VPN_PREFIX)
             builder.addRoute("0.0.0.0", 0)
             try {
-                builder.addDnsServer("8.8.8.8")
+                builder.addDnsServer(AppConfig.DNS_SERVER)
             } catch (_: Exception) {
                 // optional
             }
