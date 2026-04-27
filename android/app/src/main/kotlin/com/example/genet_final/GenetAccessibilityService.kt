@@ -262,14 +262,6 @@ class GenetAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun parseTime(s: String): Pair<Int, Int> {
-        val parts = s.split(":")
-        return Pair(
-            parts.getOrElse(0) { "0" }.toIntOrNull() ?: 0,
-            parts.getOrElse(1) { "0" }.toIntOrNull() ?: 0
-        )
-    }
-
     override fun onInterrupt() = Unit
 
     override fun onKeyEvent(event: KeyEvent): Boolean {

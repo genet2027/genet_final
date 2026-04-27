@@ -63,64 +63,81 @@ class GenetVpnService : VpnService() {
 
     fun startVpn() {
         synchronized(lifecycleLock) {
-            if (VpnState.isVpnRunning && tunInterface != null) {
-                Log.i(TAG, "VPN already running — skip duplicate start")
-                return
-            }
-            if (VpnState.isVpnRunning || tunInterface != null) {
-                Log.w(TAG, "VPN stale state — cleaning before start")
-                stopVpnInternal()
-            }
+            if (skipIfVpnAlreadyRunning()) return
             val apps = NetworkBlocker.resolveEffectiveBlockedPackages(this)
             if (apps.isEmpty()) {
-                Log.w(TAG, "VPN START FAILED")
-                stopVpnInternal()
-                stopSelf()
+                logAndAbortVpnStartNoApps()
                 return
             }
-            if (prepare(this) != null) {
-                Log.w(TAG, "VPN START FAILED")
-                stopVpnInternal()
-                stopSelf()
-                return
-            }
+            if (!prepareVpnOrAbort()) return
             startForegroundIfNeeded()
-            val builder = Builder()
-            builder.setSession(SESSION_NAME)
-            builder.setMtu(MTU)
-            builder.addAddress(VPN_ADDRESS, VPN_PREFIX)
-            builder.addRoute("0.0.0.0", 0)
-            try {
-                builder.addDnsServer(AppConfig.DNS_SERVER)
-            } catch (_: Exception) {
-                // optional
-            }
-            for (pkg in apps) {
-                try {
-                    builder.addAllowedApplication(pkg)
-                } catch (e: Exception) {
-                    Log.w(TAG, "addAllowedApplication skip: $pkg", e)
-                }
-            }
-            val pfd = try {
-                builder.establish()
-            } catch (e: Exception) {
-                Log.e(TAG, "VPN START FAILED", e)
-                stopVpnInternal()
-                stopSelf()
-                return
-            }
-            if (pfd == null) {
-                Log.e(TAG, "VPN START FAILED")
-                stopVpnInternal()
-                stopSelf()
-                return
-            }
+            val builder = buildVpnBuilderForApps(apps)
+            val pfd = establishVpnOrAbort(builder) ?: return
             tunInterface = pfd
             VpnState.isVpnRunning = true
             NetworkBlocker.startBlackhole(pfd)
             Log.i(TAG, "VPN START SUCCESS")
             Log.d("GENET_VPN", "VPN START SUCCESS")
+        }
+    }
+
+    private fun skipIfVpnAlreadyRunning(): Boolean {
+        if (VpnState.isVpnRunning && tunInterface != null) {
+            Log.i(TAG, "VPN already running — skip duplicate start")
+            return true
+        }
+        if (VpnState.isVpnRunning || tunInterface != null) {
+            Log.w(TAG, "VPN stale state — cleaning before start")
+            stopVpnInternal()
+        }
+        return false
+    }
+
+    private fun logAndAbortVpnStartNoApps() {
+        Log.w(TAG, VPN_START_FAILED)
+        stopVpnInternal()
+        stopSelf()
+    }
+
+    private fun prepareVpnOrAbort(): Boolean {
+        if (prepare(this) != null) {
+            Log.w(TAG, VPN_START_FAILED)
+            stopVpnInternal()
+            stopSelf()
+            return false
+        }
+        return true
+    }
+
+    private fun buildVpnBuilderForApps(apps: List<String>): Builder {
+        val builder = Builder()
+        builder.setSession(SESSION_NAME)
+        builder.setMtu(MTU)
+        builder.addAddress(VPN_ADDRESS, VPN_PREFIX)
+        builder.addRoute("0.0.0.0", 0)
+        try {
+            builder.addDnsServer(AppConfig.DNS_SERVER)
+        } catch (_: Exception) {
+            // optional
+        }
+        for (pkg in apps) {
+            try {
+                builder.addAllowedApplication(pkg)
+            } catch (e: Exception) {
+                Log.w(TAG, "addAllowedApplication skip: $pkg", e)
+            }
+        }
+        return builder
+    }
+
+    private fun establishVpnOrAbort(builder: Builder): ParcelFileDescriptor? {
+        return try {
+            builder.establish()
+        } catch (e: Exception) {
+            Log.e(TAG, VPN_START_FAILED, e)
+            stopVpnInternal()
+            stopSelf()
+            null
         }
     }
 
@@ -196,6 +213,7 @@ class GenetVpnService : VpnService() {
     }
 
     companion object {
+        private const val VPN_START_FAILED = "VPN START FAILED"
         private const val TAG = "GenetVpn"
         const val ACTION_START = "com.example.genet_final.vpn.START"
         const val ACTION_STOP = "com.example.genet_final.vpn.STOP"
