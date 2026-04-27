@@ -262,21 +262,6 @@ class GenetAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun isInTimeRange(startStr: String, endStr: String): Boolean {
-        val (sh, sm) = parseTime(startStr)
-        val (eh, em) = parseTime(endStr)
-        val now = java.util.Calendar.getInstance()
-        val currentMinutes = now.get(java.util.Calendar.HOUR_OF_DAY) * 60 + now.get(java.util.Calendar.MINUTE)
-        val startMinutes = sh * 60 + sm
-        val endMinutes = eh * 60 + em
-
-        return if (startMinutes <= endMinutes) {
-            currentMinutes in startMinutes until endMinutes
-        } else {
-            currentMinutes >= startMinutes || currentMinutes < endMinutes
-        }
-    }
-
     private fun parseTime(s: String): Pair<Int, Int> {
         val parts = s.split(":")
         return Pair(
