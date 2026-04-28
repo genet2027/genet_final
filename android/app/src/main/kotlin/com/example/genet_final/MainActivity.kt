@@ -41,19 +41,9 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        EnforcementBridge.register(flutterEngine.dartExecutor.binaryMessenger)
-        InstalledAppsChannel.register(flutterEngine.dartExecutor.binaryMessenger, this)
-        EventChannel(flutterEngine.dartExecutor.binaryMessenger, INSTALLED_APPS_EVENTS_CHANNEL).setStreamHandler(
-            object : EventChannel.StreamHandler {
-                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
-                    registerInstalledAppsChangeReceiver(events)
-                }
-
-                override fun onCancel(arguments: Any?) {
-                    unregisterInstalledAppsChangeReceiver()
-                }
-            }
-        )
+        setupEnforcementBridge(flutterEngine)
+        setupInstalledAppsChannel(flutterEngine)
+        setupInstalledAppsEvents(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, VPN_CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "setBlockedApps" -> {
@@ -238,6 +228,34 @@ class MainActivity : FlutterActivity() {
                 "isIgnoringBatteryOptimizations" -> result.success(isIgnoringBatteryOptimizations())
                 "getElapsedRealtimeMs" -> result.success(SystemClock.elapsedRealtime())
                 else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun setupEnforcementBridge(flutterEngine: FlutterEngine) {
+        EnforcementBridge.register(flutterEngine.dartExecutor.binaryMessenger)
+    }
+
+    private fun setupInstalledAppsChannel(flutterEngine: FlutterEngine) {
+        InstalledAppsChannel.register(flutterEngine.dartExecutor.binaryMessenger, this)
+    }
+
+    private fun setupInstalledAppsEvents(flutterEngine: FlutterEngine) {
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            INSTALLED_APPS_EVENTS_CHANNEL
+        ).setStreamHandler(createInstalledAppsStreamHandler())
+    }
+
+    private fun createInstalledAppsStreamHandler(): EventChannel.StreamHandler {
+        return object : EventChannel.StreamHandler {
+
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                registerInstalledAppsChangeReceiver(events)
+            }
+
+            override fun onCancel(arguments: Any?) {
+                unregisterInstalledAppsChangeReceiver()
             }
         }
     }
