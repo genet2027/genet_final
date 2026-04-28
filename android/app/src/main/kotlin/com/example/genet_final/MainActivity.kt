@@ -18,6 +18,7 @@ import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import org.json.JSONArray
 import org.json.JSONObject
@@ -45,190 +46,10 @@ class MainActivity : FlutterActivity() {
         setupInstalledAppsChannel(flutterEngine)
         setupInstalledAppsEvents(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, VPN_CHANNEL).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "setBlockedApps" -> {
-                    @Suppress("UNCHECKED_CAST")
-                    val list = call.argument<List<String>>("packages") ?: emptyList()
-                    Log.d("GenetVpn", "VPN_CHANNEL setBlockedApps: full replace count=${list.size} empty=${list.isEmpty()}")
-                    applyVpnBlockedList(list)
-                    result.success(null)
-                }
-                "startVpn" -> {
-                    if (NetworkBlocker.resolveEffectiveBlockedPackages(this@MainActivity).isEmpty()) {
-                        Log.i("GenetVpn", "No blocked apps, skipping VPN")
-                        if (VpnState.isVpnRunning) {
-                            dispatchVpnServiceAction(GenetVpnService.ACTION_STOP)
-                        }
-                        result.success(mapOf("started" to false, "needsPermission" to false))
-                        return@setMethodCallHandler
-                    }
-                    if (getVpnStatus()) {
-                        result.success(mapOf("started" to false, "needsPermission" to false))
-                        return@setMethodCallHandler
-                    }
-                    val prepareIntent = VpnService.prepare(this@MainActivity)
-                    if (prepareIntent != null) {
-                        runOnUiThread {
-                            try {
-                                startActivityForResult(prepareIntent, REQUEST_VPN_PREPARE)
-                            } catch (e: Exception) {
-                                Log.e("GenetVpn", "VPN consent startActivityForResult failed", e)
-                            }
-                        }
-                        result.success(mapOf("started" to false, "needsPermission" to true))
-                    } else {
-                        if (VpnState.isVpnRunning) {
-                            Log.i("GenetVpn", "VPN STATE RESET")
-                        }
-                        dispatchVpnServiceAction(GenetVpnService.ACTION_START)
-                        result.success(mapOf("started" to true, "needsPermission" to false))
-                    }
-                }
-                "stopVpn" -> {
-                    dispatchVpnServiceAction(GenetVpnService.ACTION_STOP)
-                    result.success(null)
-                }
-                "refreshVpn" -> {
-                    @Suppress("UNCHECKED_CAST")
-                    val list = call.argument<List<String>>("packages")
-                    if (list != null) {
-                        applyVpnBlockedList(list)
-                    }
-                    if (VpnState.isVpnRunning || getVpnStatus()) {
-                        dispatchVpnServiceAction(GenetVpnService.ACTION_RESTART)
-                    }
-                    result.success(null)
-                }
-                "isVpnRunning" -> result.success(VpnState.isVpnRunning)
-                "getVpnStatus" -> result.success(getVpnStatus())
-                "getVpnProtectionStatus" -> result.success(getVpnProtectionStatus())
-                "isVpnPermissionGranted" -> result.success(VpnService.prepare(this@MainActivity) == null)
-                else -> result.notImplemented()
-            }
+            handleVpnMethodCall(call, result)
         }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "setPin" -> {
-                    val pin = call.argument<String>("pin") ?: "1234"
-                    getGenetPrefs().edit().putString("parent_pin", pin).apply()
-                    result.success(null)
-                }
-                "setSleepLock" -> {
-                    getGenetPrefs().edit()
-                        .putBoolean("sleep_lock_enabled", call.argument<Boolean>("enabled") ?: false)
-                        .putString("sleep_lock_start", call.argument<String>("start") ?: "22:00")
-                        .putString("sleep_lock_end", call.argument<String>("end") ?: "07:00")
-                        .apply()
-                    sendBroadcast(android.content.Intent(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
-                    result.success(null)
-                }
-                "setBlockedApps", "setBlockedPackages" -> {
-                    val list = call.argument<List<String>>("packages") ?: emptyList()
-                    val filtered = list.filter { it != packageName }
-                    android.util.Log.d(
-                        "GENET",
-                        "CONFIG_CHANNEL setBlockedPackages: full prefs replace size=${filtered.size} empty=${filtered.isEmpty()}",
-                    )
-                    getGenetPrefs().edit().putString(GenetAccessibilityService.KEY_BLOCKED_APPS, JSONArray(filtered).toString()).apply()
-                    GenetAccessibilityService.updateBlockedPackages(filtered)
-                    sendBroadcast(android.content.Intent(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
-                    result.success(null)
-                }
-                "setNightModeActive" -> {
-                    val active = call.argument<Boolean>("active") ?: false
-                    getGenetPrefs().edit().putBoolean(GenetAccessibilityService.KEY_NIGHT_MODE_ACTIVE, active).apply()
-                    sendBroadcast(android.content.Intent(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
-                    result.success(null)
-                }
-                "setBlockWebSearch" -> {
-                    val enabled = call.argument<Boolean>("enabled") ?: true
-                    getGenetPrefs().edit().putBoolean(GenetAccessibilityService.KEY_BLOCK_WEB_SEARCH, enabled).apply()
-                    sendBroadcast(android.content.Intent(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
-                    result.success(null)
-                }
-                "setPermissionLockEnabled" -> {
-                    val enabled = call.argument<Boolean>("enabled") ?: false
-                    getGenetPrefs().edit().putBoolean(GenetAccessibilityService.KEY_PERMISSION_LOCK_ENABLED, enabled).apply()
-                    result.success(null)
-                }
-                "setVpnProtectionLost" -> {
-                    val lost = call.argument<Boolean>("lost") ?: false
-                    getGenetPrefs().edit()
-                        .putBoolean(GenetAccessibilityService.KEY_VPN_PROTECTION_LOST, lost)
-                        .apply()
-                    sendBroadcast(android.content.Intent(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
-                    result.success(null)
-                }
-                "getPermissionLockEnabled" -> {
-                    result.success(getGenetPrefs().getBoolean(GenetAccessibilityService.KEY_PERMISSION_LOCK_ENABLED, false))
-                }
-                "setMaintenanceWindowEnd" -> {
-                    val endMs = (call.argument<Number>("endMs")?.toLong()) ?: 0L
-                    getGenetPrefs().edit().putLong(GenetAccessibilityService.KEY_MAINTENANCE_WINDOW_END, endMs).apply()
-                    result.success(null)
-                }
-                "setExtensionApproved" -> {
-                    @Suppress("UNCHECKED_CAST")
-                    val map = call.argument<Map<String, Any>>("map") ?: emptyMap<String, Any>()
-                    val json = JSONObject()
-                    map.forEach { (pkg, value) ->
-                        val until = (value as? Number)?.toLong() ?: 0L
-                        if (until > 0L) json.put(pkg, until)
-                    }
-                    getGenetPrefs().edit().putString(GenetAccessibilityService.KEY_EXTENSION_APPROVED_UNTIL, json.toString()).apply()
-                    sendBroadcast(android.content.Intent(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
-                    result.success(null)
-                }
-                "reportEvent" -> {
-                    val pkg = call.argument<String>("packageName") ?: ""
-                    val ts = call.argument<Number>("timestamp")?.toLong() ?: System.currentTimeMillis()
-                    val type = call.argument<String>("type") ?: "event"
-                    appendReportEvent(pkg, ts, type)
-                    result.success(null)
-                }
-                "openAccessibilitySettings" -> {
-                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                    result.success(null)
-                }
-                "openUsageAccessSettings" -> {
-                    startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
-                    result.success(null)
-                }
-                "openOverlaySettings" -> {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
-                        startActivity(intent)
-                    }
-                    result.success(null)
-                }
-                "isAccessibilityServiceEnabled" -> result.success(PermissionChecker.isAccessibilityServiceEnabled(this))
-                "getMissingPermissions" -> result.success(PermissionChecker.getMissingPermissions(this))
-                "getInitialRoute" -> result.success(getInitialRoute())
-                "getPackageName" -> result.success(packageName)
-                "shouldShowPermissionRecovery" -> {
-                    val show = pendingPermissionRecovery
-                    pendingPermissionRecovery = false
-                    result.success(show)
-                }
-                "enableDeviceAdmin" -> {
-                    enableDeviceAdmin()
-                    result.success(null)
-                }
-                "setChildMode" -> {
-                    val isChildMode = call.argument<Boolean>("isChildMode") ?: false
-                    getGenetPrefs().edit().putBoolean(GenetAccessibilityService.KEY_IS_CHILD_MODE, isChildMode).apply()
-                    if (!isChildMode) AppMonitorService.stop(this)
-                    result.success(null)
-                }
-                "getIsDeviceAdminEnabled" -> result.success(isDeviceAdminEnabled())
-                "openBatteryOptimizationSettings" -> {
-                    openBatteryOptimizationSettings()
-                    result.success(null)
-                }
-                "isIgnoringBatteryOptimizations" -> result.success(isIgnoringBatteryOptimizations())
-                "getElapsedRealtimeMs" -> result.success(SystemClock.elapsedRealtime())
-                else -> result.notImplemented()
-            }
+            handleConfigMethodCall(call, result)
         }
     }
 
@@ -258,6 +79,286 @@ class MainActivity : FlutterActivity() {
                 unregisterInstalledAppsChangeReceiver()
             }
         }
+    }
+
+    private fun handleVpnMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "setBlockedApps" -> handleVpnSetBlockedApps(call, result)
+            "startVpn" -> handleVpnStart(result)
+            "stopVpn" -> handleVpnStop(result)
+            "refreshVpn" -> handleVpnRefresh(call, result)
+            "isVpnRunning" -> handleVpnIsRunning(result)
+            "getVpnStatus" -> handleVpnGetStatus(result)
+            "getVpnProtectionStatus" -> handleVpnGetProtectionStatus(result)
+            "isVpnPermissionGranted" -> handleVpnIsPermissionGranted(result)
+            else -> result.notImplemented()
+        }
+    }
+
+    private fun handleVpnSetBlockedApps(call: MethodCall, result: MethodChannel.Result) {
+        @Suppress("UNCHECKED_CAST")
+        val list = call.argument<List<String>>("packages") ?: emptyList()
+        Log.d("GenetVpn", "VPN_CHANNEL setBlockedApps: full replace count=${list.size} empty=${list.isEmpty()}")
+        applyVpnBlockedList(list)
+        result.success(null)
+    }
+
+    private fun handleVpnStart(result: MethodChannel.Result) {
+        if (NetworkBlocker.resolveEffectiveBlockedPackages(this@MainActivity).isEmpty()) {
+            Log.i("GenetVpn", "No blocked apps, skipping VPN")
+            if (VpnState.isVpnRunning) {
+                dispatchVpnServiceAction(GenetVpnService.ACTION_STOP)
+            }
+            result.success(mapOf("started" to false, "needsPermission" to false))
+            return
+        }
+        if (getVpnStatus()) {
+            result.success(mapOf("started" to false, "needsPermission" to false))
+            return
+        }
+        val prepareIntent = VpnService.prepare(this@MainActivity)
+        if (prepareIntent != null) {
+            runOnUiThread {
+                try {
+                    startActivityForResult(prepareIntent, REQUEST_VPN_PREPARE)
+                } catch (e: Exception) {
+                    Log.e("GenetVpn", "VPN consent startActivityForResult failed", e)
+                }
+            }
+            result.success(mapOf("started" to false, "needsPermission" to true))
+        } else {
+            if (VpnState.isVpnRunning) {
+                Log.i("GenetVpn", "VPN STATE RESET")
+            }
+            dispatchVpnServiceAction(GenetVpnService.ACTION_START)
+            result.success(mapOf("started" to true, "needsPermission" to false))
+        }
+    }
+
+    private fun handleVpnStop(result: MethodChannel.Result) {
+        dispatchVpnServiceAction(GenetVpnService.ACTION_STOP)
+        result.success(null)
+    }
+
+    private fun handleVpnRefresh(call: MethodCall, result: MethodChannel.Result) {
+        @Suppress("UNCHECKED_CAST")
+        val list = call.argument<List<String>>("packages")
+        if (list != null) {
+            applyVpnBlockedList(list)
+        }
+        if (VpnState.isVpnRunning || getVpnStatus()) {
+            dispatchVpnServiceAction(GenetVpnService.ACTION_RESTART)
+        }
+        result.success(null)
+    }
+
+    private fun handleVpnIsRunning(result: MethodChannel.Result) {
+        result.success(VpnState.isVpnRunning)
+    }
+
+    private fun handleVpnGetStatus(result: MethodChannel.Result) {
+        result.success(getVpnStatus())
+    }
+
+    private fun handleVpnGetProtectionStatus(result: MethodChannel.Result) {
+        result.success(getVpnProtectionStatus())
+    }
+
+    private fun handleVpnIsPermissionGranted(result: MethodChannel.Result) {
+        result.success(VpnService.prepare(this@MainActivity) == null)
+    }
+
+    private fun handleConfigMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "setPin" -> handleConfigSetPin(call, result)
+            "setSleepLock" -> handleConfigSetSleepLock(call, result)
+            "setBlockedApps", "setBlockedPackages" -> handleConfigSetBlockedPackages(call, result)
+            "setNightModeActive" -> handleConfigSetNightModeActive(call, result)
+            "setBlockWebSearch" -> handleConfigSetBlockWebSearch(call, result)
+            "setPermissionLockEnabled" -> handleConfigSetPermissionLockEnabled(call, result)
+            "setVpnProtectionLost" -> handleConfigSetVpnProtectionLost(call, result)
+            "getPermissionLockEnabled" -> handleConfigGetPermissionLockEnabled(result)
+            "setMaintenanceWindowEnd" -> handleConfigSetMaintenanceWindowEnd(call, result)
+            "setExtensionApproved" -> handleConfigSetExtensionApproved(call, result)
+            "reportEvent" -> handleConfigReportEvent(call, result)
+            "openAccessibilitySettings" -> handleConfigOpenAccessibilitySettings(result)
+            "openUsageAccessSettings" -> handleConfigOpenUsageAccessSettings(result)
+            "openOverlaySettings" -> handleConfigOpenOverlaySettings(result)
+            "isAccessibilityServiceEnabled" -> handleConfigIsAccessibilityServiceEnabled(result)
+            "getMissingPermissions" -> handleConfigGetMissingPermissions(result)
+            "getInitialRoute" -> handleConfigGetInitialRoute(result)
+            "getPackageName" -> handleConfigGetPackageName(result)
+            "shouldShowPermissionRecovery" -> handleConfigShouldShowPermissionRecovery(result)
+            "enableDeviceAdmin" -> handleConfigEnableDeviceAdmin(result)
+            "setChildMode" -> handleConfigSetChildMode(call, result)
+            "getIsDeviceAdminEnabled" -> handleConfigGetIsDeviceAdminEnabled(result)
+            "openBatteryOptimizationSettings" -> handleConfigOpenBatteryOptimizationSettings(result)
+            "isIgnoringBatteryOptimizations" -> handleConfigIsIgnoringBatteryOptimizations(result)
+            "getElapsedRealtimeMs" -> handleConfigGetElapsedRealtimeMs(result)
+            else -> handleConfigMethodNotImplemented(result)
+        }
+    }
+
+    private fun handleConfigMethodNotImplemented(result: MethodChannel.Result) {
+        result.notImplemented()
+    }
+
+    private fun handleConfigSetPin(call: MethodCall, result: MethodChannel.Result) {
+        val pin = call.argument<String>("pin") ?: "1234"
+        getGenetPrefs().edit().putString("parent_pin", pin).apply()
+        result.success(null)
+    }
+
+    private fun handleConfigSetSleepLock(call: MethodCall, result: MethodChannel.Result) {
+        getGenetPrefs().edit()
+            .putBoolean("sleep_lock_enabled", call.argument<Boolean>("enabled") ?: false)
+            .putString("sleep_lock_start", call.argument<String>("start") ?: "22:00")
+            .putString("sleep_lock_end", call.argument<String>("end") ?: "07:00")
+            .apply()
+        sendBroadcast(android.content.Intent(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
+        result.success(null)
+    }
+
+    private fun handleConfigSetBlockedPackages(call: MethodCall, result: MethodChannel.Result) {
+        val list = call.argument<List<String>>("packages") ?: emptyList()
+        val filtered = list.filter { it != packageName }
+        android.util.Log.d(
+            "GENET",
+            "CONFIG_CHANNEL setBlockedPackages: full prefs replace size=${filtered.size} empty=${filtered.isEmpty()}",
+        )
+        getGenetPrefs().edit().putString(GenetAccessibilityService.KEY_BLOCKED_APPS, JSONArray(filtered).toString()).apply()
+        GenetAccessibilityService.updateBlockedPackages(filtered)
+        sendBroadcast(android.content.Intent(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
+        result.success(null)
+    }
+
+    private fun handleConfigSetNightModeActive(call: MethodCall, result: MethodChannel.Result) {
+        val active = call.argument<Boolean>("active") ?: false
+        getGenetPrefs().edit().putBoolean(GenetAccessibilityService.KEY_NIGHT_MODE_ACTIVE, active).apply()
+        sendBroadcast(android.content.Intent(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
+        result.success(null)
+    }
+
+    private fun handleConfigSetBlockWebSearch(call: MethodCall, result: MethodChannel.Result) {
+        val enabled = call.argument<Boolean>("enabled") ?: true
+        getGenetPrefs().edit().putBoolean(GenetAccessibilityService.KEY_BLOCK_WEB_SEARCH, enabled).apply()
+        sendBroadcast(android.content.Intent(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
+        result.success(null)
+    }
+
+    private fun handleConfigSetPermissionLockEnabled(call: MethodCall, result: MethodChannel.Result) {
+        val enabled = call.argument<Boolean>("enabled") ?: false
+        getGenetPrefs().edit().putBoolean(GenetAccessibilityService.KEY_PERMISSION_LOCK_ENABLED, enabled).apply()
+        result.success(null)
+    }
+
+    private fun handleConfigSetVpnProtectionLost(call: MethodCall, result: MethodChannel.Result) {
+        val lost = call.argument<Boolean>("lost") ?: false
+        getGenetPrefs().edit()
+            .putBoolean(GenetAccessibilityService.KEY_VPN_PROTECTION_LOST, lost)
+            .apply()
+        sendBroadcast(android.content.Intent(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
+        result.success(null)
+    }
+
+    private fun handleConfigGetPermissionLockEnabled(result: MethodChannel.Result) {
+        result.success(getGenetPrefs().getBoolean(GenetAccessibilityService.KEY_PERMISSION_LOCK_ENABLED, false))
+    }
+
+    private fun handleConfigSetMaintenanceWindowEnd(call: MethodCall, result: MethodChannel.Result) {
+        val endMs = (call.argument<Number>("endMs")?.toLong()) ?: 0L
+        getGenetPrefs().edit().putLong(GenetAccessibilityService.KEY_MAINTENANCE_WINDOW_END, endMs).apply()
+        result.success(null)
+    }
+
+    private fun handleConfigSetExtensionApproved(call: MethodCall, result: MethodChannel.Result) {
+        @Suppress("UNCHECKED_CAST")
+        val map = call.argument<Map<String, Any>>("map") ?: emptyMap<String, Any>()
+        val json = JSONObject()
+        map.forEach { (pkg, value) ->
+            val until = (value as? Number)?.toLong() ?: 0L
+            if (until > 0L) json.put(pkg, until)
+        }
+        getGenetPrefs().edit().putString(GenetAccessibilityService.KEY_EXTENSION_APPROVED_UNTIL, json.toString()).apply()
+        sendBroadcast(android.content.Intent(GenetAccessibilityService.ACTION_CONFIG_CHANGED))
+        result.success(null)
+    }
+
+    private fun handleConfigReportEvent(call: MethodCall, result: MethodChannel.Result) {
+        val pkg = call.argument<String>("packageName") ?: ""
+        val ts = call.argument<Number>("timestamp")?.toLong() ?: System.currentTimeMillis()
+        val type = call.argument<String>("type") ?: "event"
+        appendReportEvent(pkg, ts, type)
+        result.success(null)
+    }
+
+    private fun handleConfigOpenAccessibilitySettings(result: MethodChannel.Result) {
+        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        result.success(null)
+    }
+
+    private fun handleConfigOpenUsageAccessSettings(result: MethodChannel.Result) {
+        startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+        result.success(null)
+    }
+
+    private fun handleConfigOpenOverlaySettings(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+            startActivity(intent)
+        }
+        result.success(null)
+    }
+
+    private fun handleConfigIsAccessibilityServiceEnabled(result: MethodChannel.Result) {
+        result.success(PermissionChecker.isAccessibilityServiceEnabled(this))
+    }
+
+    private fun handleConfigGetMissingPermissions(result: MethodChannel.Result) {
+        result.success(PermissionChecker.getMissingPermissions(this))
+    }
+
+    private fun handleConfigGetInitialRoute(result: MethodChannel.Result) {
+        result.success(getInitialRoute())
+    }
+
+    private fun handleConfigGetPackageName(result: MethodChannel.Result) {
+        result.success(packageName)
+    }
+
+    private fun handleConfigShouldShowPermissionRecovery(result: MethodChannel.Result) {
+        val show = pendingPermissionRecovery
+        pendingPermissionRecovery = false
+        result.success(show)
+    }
+
+    private fun handleConfigEnableDeviceAdmin(result: MethodChannel.Result) {
+        enableDeviceAdmin()
+        result.success(null)
+    }
+
+    private fun handleConfigSetChildMode(call: MethodCall, result: MethodChannel.Result) {
+        val isChildMode = call.argument<Boolean>("isChildMode") ?: false
+        getGenetPrefs().edit().putBoolean(GenetAccessibilityService.KEY_IS_CHILD_MODE, isChildMode).apply()
+        if (!isChildMode) AppMonitorService.stop(this)
+        result.success(null)
+    }
+
+    private fun handleConfigGetIsDeviceAdminEnabled(result: MethodChannel.Result) {
+        result.success(isDeviceAdminEnabled())
+    }
+
+    private fun handleConfigOpenBatteryOptimizationSettings(result: MethodChannel.Result) {
+        openBatteryOptimizationSettings()
+        result.success(null)
+    }
+
+    private fun handleConfigIsIgnoringBatteryOptimizations(result: MethodChannel.Result) {
+        result.success(isIgnoringBatteryOptimizations())
+    }
+
+    private fun handleConfigGetElapsedRealtimeMs(result: MethodChannel.Result) {
+        result.success(SystemClock.elapsedRealtime())
     }
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
