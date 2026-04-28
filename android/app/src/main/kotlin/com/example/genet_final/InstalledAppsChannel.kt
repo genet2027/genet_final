@@ -72,7 +72,9 @@ object InstalledAppsChannel {
                     METHOD_ON_PACKAGE_CHANGED,
                     payload,
                     object : MethodChannel.Result {
-                        override fun success(result: Any?) {}
+                        override fun success(result: Any?) {
+                            // No-op: required callback, no action needed for installed apps channel
+                        }
                         override fun error(
                             errorCode: String,
                             errorMessage: String?,

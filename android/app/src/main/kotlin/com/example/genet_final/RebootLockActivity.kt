@@ -41,9 +41,8 @@ class RebootLockActivity : Activity() {
         }
     }
 
-    override fun onBackPressed() {}
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK) return true
-        return super.onKeyDown(keyCode, event)
+    override fun onBackPressed() {
+        super.onBackPressed()
     }
+   
 }
