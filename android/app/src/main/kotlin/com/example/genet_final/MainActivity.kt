@@ -427,6 +427,7 @@ class MainActivity : FlutterActivity() {
         try {
             unregisterReceiver(receiver)
         } catch (_: IllegalArgumentException) {
+            // No-op: receiver already unregistered or invalid to unregister.
         }
         installedAppsChangeReceiver = null
     }
@@ -451,7 +452,9 @@ class MainActivity : FlutterActivity() {
             val arr = JSONArray(existing)
             arr.put(JSONObject().put("p", packageName).put("t", timestamp).put("e", type))
             prefs.edit().putString(GenetAccessibilityService.KEY_REPORT_EVENTS, arr.toString()).apply()
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+            // No-op: report persistence failures are ignored.
+        }
     }
 
     private fun getGenetPrefs() = getSharedPreferences(GenetAccessibilityService.PREFS_NAME, MODE_PRIVATE)
@@ -543,7 +546,9 @@ class MainActivity : FlutterActivity() {
             val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
                 data = Uri.parse("package:$packageName")
             }
-            try { startActivity(intent) } catch (_: Exception) {}
+            try { startActivity(intent) } catch (_: Exception) {
+                // No-op: activity may be unavailable; optimization dialog optional.
+            }
         }
     }
 
