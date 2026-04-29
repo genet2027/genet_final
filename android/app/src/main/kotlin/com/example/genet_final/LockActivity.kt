@@ -77,7 +77,9 @@ class LockActivity : Activity() {
     }
 
     override fun onDestroy() {
-        try { unregisterReceiver(configReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(configReceiver) } catch (_: Exception) {
+            // No-op: unregister failure ignored when receiver was not registered.
+        }
         super.onDestroy()
     }
 
