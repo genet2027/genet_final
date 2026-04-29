@@ -219,7 +219,8 @@ class GenetVpnService : VpnService() {
         const val ACTION_STOP = "com.example.genet_final.vpn.STOP"
         const val ACTION_RESTART = "com.example.genet_final.vpn.RESTART"
         private const val SESSION_NAME = "GenetLocalVpn"
-        // Intentional fixed TUN address for the local VPN interface; internal/captive use only, not user-facing network choice.
+        // Intentional fixed TUN address for the local VPN interface; internal/captive use only.
+        @Suppress("kotlin:S1313")
         private const val VPN_ADDRESS = "10.7.0.2"
         private const val VPN_PREFIX = 32
         private const val MTU = 1500
