@@ -63,7 +63,9 @@ class LockOverlayView(
     fun unregisterReceiver() {
         try {
             context.applicationContext.unregisterReceiver(parentApprovalReceiver)
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+            // No-op: unregister failure ignored when receiver was not registered.
+        }
     }
 
     companion object {
