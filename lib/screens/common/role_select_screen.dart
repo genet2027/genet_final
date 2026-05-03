@@ -1,3 +1,8 @@
+/// ⚠️ DEPRECATED FILE - DO NOT USE
+/// This file is no longer part of the active app flow.
+/// Use `lib/screens/role_select_screen.dart` instead.
+/// Safe to delete after final cleanup phase.
+
 import 'package:flutter/material.dart';
 
 import '../../core/config/genet_config.dart';
@@ -6,13 +11,13 @@ import '../../l10n/app_localizations.dart';
 import '../../repositories/children_repository.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/language_switcher.dart';
-import '../child_home_screen.dart';
+import '../child/child_home_screen.dart';
 import '../child/child_self_identify_screen.dart';
 import 'pin_login_screen.dart';
 
 /// מסך בחירת תפקיד: הורה או ילד. כניסה ראשית לאפליקציה.
-class RoleSelectScreen extends StatelessWidget {
-  const RoleSelectScreen({super.key});
+class RoleSelectScreen_Deprecated extends StatelessWidget {
+  const RoleSelectScreen_Deprecated({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -54,7 +59,7 @@ class RoleSelectScreen extends StatelessWidget {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => const PinLoginScreen(),
+                          builder: (context) => const PinLoginScreen_Deprecated(),
                         ),
                       );
                     },
@@ -69,7 +74,7 @@ class RoleSelectScreen extends StatelessWidget {
                 const SizedBox(height: 16),
                 SizedBox(
                   width: double.infinity,
-                    child: OutlinedButton(
+                  child: OutlinedButton(
                     onPressed: () async {
                       await GenetConfig.commitUserRole(kUserRoleChild);
                       final linkedId = await getLinkedChildId();
@@ -78,7 +83,7 @@ class RoleSelectScreen extends StatelessWidget {
                         Navigator.pushReplacement(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => const ChildHomeScreen(),
+                            builder: (context) => const ChildHomeScreen_Deprecated(),
                           ),
                         );
                         return;
@@ -89,8 +94,8 @@ class RoleSelectScreen extends StatelessWidget {
                         context,
                         MaterialPageRoute(
                           builder: (context) => hasProfile
-                              ? const ChildHomeScreen()
-                              : const ChildSelfIdentifyScreen(),
+                              ? const ChildHomeScreen_Deprecated()
+                              : const ChildSelfIdentifyScreen_Deprecated(),
                         ),
                       );
                     },

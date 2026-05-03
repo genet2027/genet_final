@@ -109,15 +109,20 @@ class _AddChildByLinkScreenState extends State<AddChildByLinkScreen> {
       );
       if (!ok) {
         final snap = await readCanonicalChildData(parentId, child.childId);
-        final docCode = normalizeIdentifier(snap?['linkCode'] as String?);
-        final sessionCode = normalizeIdentifier(code);
-        final remoteLooksActive = snap != null &&
-            canonicalChildDataActiveForParent(snap, parentId) &&
-            docCode != null &&
-            sessionCode != null &&
-            docCode == sessionCode;
-        if (!remoteLooksActive) {
+        final active = snap != null && canonicalChildDataActiveForParent(snap, parentId);
+        if (!active) {
           await removeChild(child.childId);
+          if (snap != null) {
+            try {
+              await setChildConnectionStatusFirebase(
+                parentId,
+                child.childId,
+                'disconnected',
+              );
+            } catch (e, st) {
+              debugPrint('[GENET][LINK_CHILD] orphan canonical disconnect: $e $st');
+            }
+          }
         }
         if (mounted) {
           setState(() {
@@ -152,6 +157,20 @@ class _AddChildByLinkScreenState extends State<AddChildByLinkScreen> {
       );
       Navigator.pop(context);
     } catch (e) {
+      try {
+        await removeChild(child.childId);
+      } catch (_) {}
+      try {
+        final pid = _parentId;
+        if (pid != null) {
+          final snap = await readCanonicalChildData(pid, child.childId);
+          if (snap != null) {
+            await setChildConnectionStatusFirebase(pid, child.childId, 'disconnected');
+          }
+        }
+      } catch (e2, st2) {
+        debugPrint('[GENET][LINK_CHILD] catch cleanup: $e2 $st2');
+      }
       if (e is FirebaseException) {
         debugPrint('[GENET][LINK_CHILD][ERROR] code=${e.code} message=${e.message}');
       } else {

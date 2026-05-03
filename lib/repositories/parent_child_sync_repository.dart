@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/config/genet_config.dart';
 import '../core/extension_requests.dart';
+import '../core/user_role.dart';
 import '../models/child_entity.dart';
 import '../models/installed_app.dart';
 import '../models/parent_message.dart';
@@ -569,6 +570,25 @@ Future<void> clearChildLinkedPrefsKeepLocalIdentity() async {
   await setLinkedParentId(null);
 }
 
+/// Cold start (e.g. after [initializeAppBootstrap]): if role is child and saved link prefs
+/// reference a canonical doc that **exists** but is not active for that parent, clear link prefs.
+/// When the read returns null (offline / not yet loaded), prefs are left intact so the child UI can verify.
+Future<void> clearChildLinkedPrefsIfSavedCanonicalInactive() async {
+  try {
+    final role = await getUserRole();
+    if (role != kUserRoleChild) return;
+    final p = normalizeIdentifier(await getLinkedParentId());
+    final c = normalizeIdentifier(await getLinkedChildId());
+    if (p == null || c == null) return;
+    final data = await readCanonicalChildData(p, c);
+    if (data != null && !canonicalChildDataActiveForParent(data, p)) {
+      await clearChildLinkedPrefsKeepLocalIdentity();
+    }
+  } catch (e, st) {
+    developer.log('clearChildLinkedPrefsIfSavedCanonicalInactive: $e $st', name: 'Sync');
+  }
+}
+
 /// One bounded canonical check for saved `genet_linked_parent_id` + `genet_linked_child_id`.
 Future<SavedChildLinkPreflightResult> preflightSavedChildCanonicalLink({
   Duration timeout = const Duration(seconds: 4),
@@ -619,8 +639,8 @@ bool canonicalChildDataActiveForParent(
   final exp = normalizeIdentifier(expectedParentId);
   final docPid = normalizeIdentifier(data[_kParentId] as String?);
   if (exp == null || docPid == null || docPid != exp) return false;
-  final status = data[_kConnectionStatus] as String? ?? _kConnected;
-  return isConnectionStatusConnected(status);
+  final status = data[_kConnectionStatus] as String?;
+  return status == _kConnected;
 }
 
 /// True when this device has committed durable child linked prefs for the given pair.
@@ -650,11 +670,22 @@ Future<void> reconcileFalseRemoteConnectedAfterIncompleteChildLink({
   final p = normalizeIdentifier(parentId);
   final c = normalizeIdentifier(childId);
   final code = normalizeIdentifier(linkCode);
-  if (p == null || c == null || code == null) return;
+  if (p == null || c == null || code == null) {
+    developer.log(
+      'INCOMPLETE_LINK_RECONCILE OUTCOME=abort_invalid_args parent=$parentId child=$childId code=$linkCode',
+      name: 'Sync',
+    );
+    return;
+  }
+
+  developer.log(
+    'INCOMPLETE_LINK_RECONCILE begin parent=$p child=$c code=$code',
+    name: 'Sync',
+  );
 
   if (await childDeviceDurablyLinkedToParent(parentId, childId)) {
     developer.log(
-      'INCOMPLETE_LINK_RECONCILE skip: child already durably linked locally parent=$p child=$c',
+      'INCOMPLETE_LINK_RECONCILE OUTCOME=skip_already_durably_linked parent=$p child=$c',
       name: 'Sync',
     );
     return;
@@ -663,14 +694,14 @@ Future<void> reconcileFalseRemoteConnectedAfterIncompleteChildLink({
   var data = await readCanonicalChildData(p, c);
   if (data == null || !canonicalChildDataActiveForParent(data, p)) {
     developer.log(
-      'INCOMPLETE_LINK_RECONCILE skip: canonical missing or not connected parent=$p child=$c',
+      'INCOMPLETE_LINK_RECONCILE OUTCOME=skip_no_active_canonical parent=$p child=$c',
       name: 'Sync',
     );
     return;
   }
   if (normalizeIdentifier(data[_kLinkCode] as String?) != code) {
     developer.log(
-      'INCOMPLETE_LINK_RECONCILE skip: linkCode mismatch (likely newer attempt) parent=$p child=$c',
+      'INCOMPLETE_LINK_RECONCILE OUTCOME=skip_linkcode_mismatch parent=$p child=$c',
       name: 'Sync',
     );
     return;
@@ -678,7 +709,7 @@ Future<void> reconcileFalseRemoteConnectedAfterIncompleteChildLink({
 
   if (await childDeviceDurablyLinkedToParent(parentId, childId)) {
     developer.log(
-      'INCOMPLETE_LINK_RECONCILE skip: linked prefs appeared before disconnect parent=$p child=$c',
+      'INCOMPLETE_LINK_RECONCILE OUTCOME=skip_prefs_raced_before_disconnect parent=$p child=$c',
       name: 'Sync',
     );
     return;
@@ -689,7 +720,7 @@ Future<void> reconcileFalseRemoteConnectedAfterIncompleteChildLink({
       !canonicalChildDataActiveForParent(data, p) ||
       normalizeIdentifier(data[_kLinkCode] as String?) != code) {
     developer.log(
-      'INCOMPLETE_LINK_RECONCILE skip: canonical changed before disconnect parent=$p child=$c',
+      'INCOMPLETE_LINK_RECONCILE OUTCOME=skip_canonical_changed parent=$p child=$c',
       name: 'Sync',
     );
     return;
@@ -698,12 +729,12 @@ Future<void> reconcileFalseRemoteConnectedAfterIncompleteChildLink({
   try {
     await setChildConnectionStatusFirebase(p, c, _kDisconnected);
     developer.log(
-      'INCOMPLETE_LINK_RECONCILE applied: canonical marked disconnected parent=$p child=$c code=$code',
+      'INCOMPLETE_LINK_RECONCILE OUTCOME=applied_disconnect parent=$p child=$c code=$code',
       name: 'Sync',
     );
   } catch (e, st) {
     developer.log(
-      'INCOMPLETE_LINK_RECONCILE failed: parent=$p child=$c error=$e $st',
+      'INCOMPLETE_LINK_RECONCILE OUTCOME=error_disconnect_failed parent=$p child=$c error=$e $st',
       name: 'Sync',
     );
   }
@@ -961,7 +992,7 @@ class SyncedChildData {
     this.blockedPackages = const [],
     this.extensionApproved = const {},
     this.extensionRequests = const [],
-    this.connectionStatus = 'connected',
+    this.connectionStatus,
     this.parentId,
     this.vpnEnabled = false,
     this.vpnStatus,
@@ -969,7 +1000,8 @@ class SyncedChildData {
   final List<String> blockedPackages;
   final Map<String, int> extensionApproved;
   final List<ExtensionRequest> extensionRequests;
-  final String connectionStatus;
+  /// Firestore `connectionStatus` only; null if missing — must not be treated as connected.
+  final String? connectionStatus;
   final String? parentId;
   final bool vpnEnabled;
   /// Last status written by child device: on | off | error
@@ -980,7 +1012,7 @@ SyncedChildData _mapSyncedChildData(Map<String, dynamic> data) {
   final blocked = (data[_kBlockedPackages] as List?)?.cast<String>() ?? [];
   final approved = _parseExtensionApprovedMap(data);
   final requests = _parseExtensionRequests(data);
-  final status = data[_kConnectionStatus] as String? ?? _kConnected;
+  final status = data[_kConnectionStatus] as String?;
   final parentId = data[_kParentId] as String?;
   final vpnEnabled = data[_kVpnEnabled] == true;
   final vpnStatus = data[_kVpnStatus] as String?;
@@ -1060,9 +1092,13 @@ Stream<List<ChildEntity>> watchParentChildrenStream(String parentId) async* {
     for (final doc in snap.docs) {
       final data = doc.data();
       final childId = doc.id;
-      final docParentId = data[_kParentId] as String?;
-      final status = data[_kConnectionStatus] as String? ?? _kConnected;
-      if (docParentId != parentId || !isConnectionStatusConnected(status)) {
+      final docParentIdNorm = normalizeIdentifier(data[_kParentId] as String?);
+      final parentIdNorm = normalizeIdentifier(parentId);
+      final status = data[_kConnectionStatus] as String?;
+      if (docParentIdNorm == null ||
+          parentIdNorm == null ||
+          docParentIdNorm != parentIdNorm ||
+          status != _kConnected) {
         continue;
       }
       final profile = data[_kProfile] as Map<String, dynamic>? ?? {};
@@ -1078,8 +1114,8 @@ Stream<List<ChildEntity>> watchParentChildrenStream(String parentId) async* {
         age: (profile[_kAge] as num?)?.toInt() ?? 0,
         schoolCode: profile[_kSchoolCode] as String? ?? '',
         linkCode: linkCode,
-        isConnected: status == _kConnected,
-        connectionStatus: status == _kConnected ? ChildConnectionStatus.connected : ChildConnectionStatus.disconnected,
+        isConnected: true,
+        connectionStatus: ChildConnectionStatus.connected,
       ));
     }
     developer.log('PARENT_READ_QUERY_RESULT_COUNT = ${list.length}', name: 'Sync');

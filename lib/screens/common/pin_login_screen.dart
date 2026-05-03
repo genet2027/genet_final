@@ -1,3 +1,8 @@
+/// ⚠️ DEPRECATED FILE - DO NOT USE
+/// This file is no longer part of the active app flow.
+/// Use `lib/screens/pin_login_screen.dart` instead.
+/// Safe to delete after final cleanup phase.
+
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -10,14 +15,14 @@ import '../../theme/app_theme.dart';
 import '../parent/parent_shell.dart';
 
 /// מסך הזנת PIN לאימות הורה
-class PinLoginScreen extends StatefulWidget {
-  const PinLoginScreen({super.key});
+class PinLoginScreen_Deprecated extends StatefulWidget {
+  const PinLoginScreen_Deprecated({super.key});
 
   @override
-  State<PinLoginScreen> createState() => _PinLoginScreenState();
+  State<PinLoginScreen_Deprecated> createState() => _PinLoginScreenState_Deprecated();
 }
 
-class _PinLoginScreenState extends State<PinLoginScreen> {
+class _PinLoginScreenState_Deprecated extends State<PinLoginScreen_Deprecated> {
   final TextEditingController _pinController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
 

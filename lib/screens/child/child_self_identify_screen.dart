@@ -1,20 +1,25 @@
+/// ⚠️ DEPRECATED FILE - DO NOT USE
+/// This file is no longer part of the active app flow.
+/// Use the root version in lib/screens/ instead.
+/// Safe to delete after final cleanup phase.
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../repositories/children_repository.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/natural_text_field.dart';
-import '../child_home_screen.dart';
+import 'child_home_screen.dart';
 
 /// Step 1: Child enters first name, last name, age, school code. Saved locally and used when linking to parent.
-class ChildSelfIdentifyScreen extends StatefulWidget {
-  const ChildSelfIdentifyScreen({super.key});
+class ChildSelfIdentifyScreen_Deprecated extends StatefulWidget {
+  const ChildSelfIdentifyScreen_Deprecated({super.key});
 
   @override
-  State<ChildSelfIdentifyScreen> createState() => _ChildSelfIdentifyScreenState();
+  State<ChildSelfIdentifyScreen_Deprecated> createState() => _ChildSelfIdentifyScreenState_Deprecated();
 }
 
-class _ChildSelfIdentifyScreenState extends State<ChildSelfIdentifyScreen> {
+class _ChildSelfIdentifyScreenState_Deprecated extends State<ChildSelfIdentifyScreen_Deprecated> {
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
   final _ageController = TextEditingController();
@@ -49,7 +54,7 @@ class _ChildSelfIdentifyScreenState extends State<ChildSelfIdentifyScreen> {
     if (!mounted) return;
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (_) => const ChildHomeScreen()),
+      MaterialPageRoute(builder: (_) => const ChildHomeScreen_Deprecated()),
     );
   }
 

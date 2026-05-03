@@ -1,5 +1,7 @@
-// DEPRECATED WRAPPER.
-// The authoritative implementation is `lib/screens/settings_screen.dart`.
+/// ⚠️ DEPRECATED FILE - DO NOT USE
+/// This file is no longer part of the active app flow.
+/// Use `lib/screens/settings_screen.dart` instead.
+/// Safe to delete after final cleanup phase.
 
 import 'dart:io';
 
@@ -12,14 +14,14 @@ import '../parent/night_mode_settings_screen.dart';
 import 'pin_login_screen.dart';
 
 /// Settings tab content: entries to Night Mode, Backup & Support, and Logout.
-class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+class SettingsScreen_Deprecated extends StatefulWidget {
+  const SettingsScreen_Deprecated({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  State<SettingsScreen_Deprecated> createState() => _SettingsScreenState_Deprecated();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObserver {
+class _SettingsScreenState_Deprecated extends State<SettingsScreen_Deprecated> with WidgetsBindingObserver {
   List<String> _missingPermissions = [];
   bool _deviceAdminEnabled = false;
   bool _batteryOptimizationIgnored = true;
@@ -166,7 +168,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   void _logout(BuildContext context) {
     Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(builder: (_) => const PinLoginScreen()),
+      MaterialPageRoute(builder: (_) => const PinLoginScreen_Deprecated()),
       (route) => false,
     );
   }

@@ -69,6 +69,9 @@ class _NativeVpnSnapshot {
 
 /// Child home: connection status from Firebase only. When parent disconnects, UI updates in place.
 ///
+/// Connection UX phases: **checking** (verifying until Firestore resolves), **connected**,
+/// **disconnected** (only after confirmed invalid state or no saved link prefs).
+///
 /// [canonicalStartupPreflightUnverified]: role-select could not confirm the canonical doc within
 /// the startup window; connection UI waits on the stream / stale reconcile (prefs are not proof).
 ///
@@ -126,9 +129,13 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
   StreamSubscription<List<InstalledApp>>? _relevantLocalListSub;
   StreamSubscription<dynamic>? _enforcementSub;
 
-  /// Single source of truth from Firebase: true = connected, false = disconnected, null = loading
+  /// Single source of truth from Firebase: true = connected, false = disconnected, null = unknown / loading
   bool? _firebaseConnectionStatus;
   String? _linkedNameForDisplay;
+
+  /// True until link state is resolved from Firestore (or known unlinked with no prefs).
+  /// While true, UI must not show the disconnected (amber) card for a null connection snapshot.
+  bool _isVerifyingConnection = true;
 
   /// Copied from [ChildHomeScreen.canonicalStartupPreflightUnverified] at init.
   bool _canonicalStartupPreflightUnverified = false;
@@ -945,6 +952,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     _childProtectionFlow.resetAfterDisconnect();
     setState(() {
       _firebaseConnectionStatus = false;
+      _isVerifyingConnection = false;
       _linkedNameForDisplay = null;
       _lastSyncedForVpn = null;
       _installedAppsSyncQueued = false;
@@ -1047,7 +1055,16 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
         _lastSyncedForVpn = data;
         final vpnDot = await handleSleepLockState(data: data);
         final snap = await _readNativeVpnSnapshotForSyncedPolicy(data);
-        if (snap == null || !mounted) return;
+        if (snap == null || !mounted) {
+          if (mounted) {
+            setState(() {
+              _isVerifyingConnection = false;
+              _firebaseConnectionStatus = true;
+              _linkedNameForDisplay = name;
+            });
+          }
+          return;
+        }
         final uiFp = _childHomeUiFingerprint(
           data: data,
           name: name,
@@ -1057,6 +1074,13 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
         );
         if (uiFp == _lastChildHomeUiFingerprint) {
           debugPrint('[GenetVpn] skipped duplicate setState');
+          if (mounted && _isVerifyingConnection) {
+            setState(() {
+              _isVerifyingConnection = false;
+              _firebaseConnectionStatus = true;
+              _linkedNameForDisplay = name;
+            });
+          }
           return;
         }
         _lastChildHomeUiFingerprint = uiFp;
@@ -1064,6 +1088,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
           debugPrint('[GenetVpn] vpnStatus changed from $_vpnIndicatorStatus to $vpnDot');
         }
         setState(() {
+          _isVerifyingConnection = false;
           _firebaseConnectionStatus = true;
           _linkedNameForDisplay = name;
         });
@@ -1077,6 +1102,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
         );
       } else if (mounted) {
         setState(() {
+          _isVerifyingConnection = false;
           _firebaseConnectionStatus = true;
           _linkedNameForDisplay = name;
         });
@@ -1100,10 +1126,14 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     if (role != kUserRoleChild) return;
     final prefsParent = normalizeIdentifier(await getLinkedParentId());
     final prefsChild = normalizeIdentifier(await getLinkedChildId());
-    if (prefsParent == null || prefsChild == null) return;
+    if (prefsParent == null || prefsChild == null) {
+      if (mounted) setState(() => _isVerifyingConnection = false);
+      return;
+    }
     if (prefsParent != normalizeIdentifier(expectedParentId) ||
         prefsChild != normalizeIdentifier(expectedChildId)) {
       developer.log('Stale canonical reconcile skipped: local prefs changed', name: 'Sync');
+      if (mounted) setState(() => _isVerifyingConnection = false);
       return;
     }
     try {
@@ -1114,9 +1144,12 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
           name: 'Sync',
         );
         await _handleDisconnected();
+      } else if (mounted) {
+        setState(() => _isVerifyingConnection = false);
       }
     } catch (e, st) {
       developer.log('Stale canonical reconcile read failed: $e $st', name: 'Sync');
+      if (mounted) setState(() => _isVerifyingConnection = false);
     }
   }
 
@@ -1125,7 +1158,12 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     final childId = normalizeIdentifier(await getLinkedChildId());
     if (parentId == null || childId == null) {
       developer.log('Child connection status: no parentId or childId, showing disconnected', name: 'Sync');
-      if (mounted) setState(() => _firebaseConnectionStatus = false);
+      if (mounted) {
+        setState(() {
+          _firebaseConnectionStatus = false;
+          _isVerifyingConnection = false;
+        });
+      }
       return;
     }
     _staleCanonicalDocTimer?.cancel();
@@ -1138,7 +1176,12 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     });
     developer.log('CHILD_READ_PATH = genet_parents/$parentId/children/$childId', name: 'Sync');
     developer.log('CHILD_READ_CHILD_ID = $childId', name: 'Sync');
-    if (mounted) setState(() => _firebaseConnectionStatus = null);
+    if (mounted) {
+      setState(() {
+        _firebaseConnectionStatus = null;
+        _isVerifyingConnection = true;
+      });
+    }
     _firebaseSyncSub = watchSyncedChildDataStream(parentId, childId).listen(
       (data) => unawaited(_onSyncedChildDataEvent(data, parentId, childId)),
     );
@@ -1447,12 +1490,18 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
                     }
                   }
                 }
-                final isConnected = _firebaseConnectionStatus == true;
+                final bool showConnectedCard = _firebaseConnectionStatus == true;
+                final bool showDisconnectedCard =
+                    _firebaseConnectionStatus == false && !_isVerifyingConnection;
+                final bool showConnectionChecking = !showConnectedCard &&
+                    !showDisconnectedCard &&
+                    (_isVerifyingConnection ||
+                        (_canonicalStartupPreflightUnverified &&
+                            _firebaseConnectionStatus != true));
                 return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              if (_canonicalStartupPreflightUnverified &&
-                  _firebaseConnectionStatus == null) ...[
+              if (showConnectionChecking) ...[
                 Card(
                   elevation: 1,
                   color: Colors.blue.shade50,
@@ -1469,7 +1518,9 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
-                            'מאמת חיבור מול השרת…',
+                            _canonicalStartupPreflightUnverified
+                                ? 'מאמת חיבור מול השרת…'
+                                : 'בודק חיבור…',
                             style: TextStyle(
                               fontSize: 14,
                               color: Colors.grey.shade900,
@@ -1483,7 +1534,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
                 ),
                 const SizedBox(height: 12),
               ],
-              if (isConnected && Platform.isAndroid) ...[
+              if (showConnectedCard && Platform.isAndroid) ...[
                 Card(
                   elevation: 2,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -1526,7 +1577,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
                 ),
                 const SizedBox(height: 16),
               ],
-              if (isConnected) ...[
+              if (showConnectedCard) ...[
                 Card(
                   elevation: 2,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -1571,7 +1622,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
                 ),
                 const SizedBox(height: 16),
               ],
-              if (!isConnected) ...[
+              if (showDisconnectedCard) ...[
                 Card(
                   elevation: 2,
                   color: Colors.amber.shade50,

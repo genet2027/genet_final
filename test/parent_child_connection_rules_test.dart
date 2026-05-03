@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:genet_final/core/user_role.dart';
 import 'package:genet_final/repositories/parent_child_sync_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -87,13 +88,13 @@ void main() {
       );
     });
 
-    test('missing connectionStatus defaults to connected in mapper', () {
+    test('false when connectionStatus field is missing', () {
       expect(
         canonicalChildDataActiveForParent(
           {'parentId': 'p_a'},
           'p_a',
         ),
-        isTrue,
+        isFalse,
       );
     });
   });
@@ -253,6 +254,67 @@ void main() {
         linkCode: '1234',
       );
       expect(writes, contains('p1|c1|disconnected'));
+    });
+  });
+
+  group('clearChildLinkedPrefsIfSavedCanonicalInactive', () {
+    test('null canonical read does not clear linked prefs (transient/offline)', () async {
+      SharedPreferences.setMockInitialValues({
+        kUserRoleKey: kUserRoleChild,
+        'genet_linked_parent_id': 'p1',
+        'genet_linked_child_id': 'c1',
+      });
+      debugReadCanonicalChildDataForTests = (p, c) async => null;
+      await clearChildLinkedPrefsIfSavedCanonicalInactive();
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('genet_linked_parent_id'), 'p1');
+      expect(prefs.getString('genet_linked_child_id'), 'c1');
+    });
+
+    test('inactive canonical doc clears linked prefs', () async {
+      SharedPreferences.setMockInitialValues({
+        kUserRoleKey: kUserRoleChild,
+        'genet_linked_parent_id': 'p1',
+        'genet_linked_child_id': 'c1',
+      });
+      debugReadCanonicalChildDataForTests = (p, c) async => _connectedDoc(
+            parentId: 'p1',
+            connectionStatus: 'disconnected',
+          );
+      await clearChildLinkedPrefsIfSavedCanonicalInactive();
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('genet_linked_parent_id'), isNull);
+      expect(prefs.getString('genet_linked_child_id'), isNull);
+    });
+
+    test('active canonical doc does not clear prefs', () async {
+      SharedPreferences.setMockInitialValues({
+        kUserRoleKey: kUserRoleChild,
+        'genet_linked_parent_id': 'p1',
+        'genet_linked_child_id': 'c1',
+      });
+      debugReadCanonicalChildDataForTests =
+          (p, c) async => _connectedDoc(parentId: 'p1');
+      await clearChildLinkedPrefsIfSavedCanonicalInactive();
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('genet_linked_parent_id'), 'p1');
+      expect(prefs.getString('genet_linked_child_id'), 'c1');
+    });
+
+    test('parent role skips sanitize (prefs unchanged even if canonical inactive)', () async {
+      SharedPreferences.setMockInitialValues({
+        kUserRoleKey: kUserRoleParent,
+        'genet_linked_parent_id': 'p1',
+        'genet_linked_child_id': 'c1',
+      });
+      debugReadCanonicalChildDataForTests = (p, c) async => _connectedDoc(
+            parentId: 'p1',
+            connectionStatus: 'disconnected',
+          );
+      await clearChildLinkedPrefsIfSavedCanonicalInactive();
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('genet_linked_parent_id'), 'p1');
+      expect(prefs.getString('genet_linked_child_id'), 'c1');
     });
   });
 

@@ -11,6 +11,7 @@ import 'core/config/genet_config.dart';
 import 'core/user_role.dart';
 import 'l10n/app_localizations.dart';
 import 'repositories/children_repository.dart';
+import 'repositories/parent_child_sync_repository.dart';
 import 'providers/language_provider.dart';
 import 'screens/permission_recovery_screen.dart';
 import 'screens/role_select_screen.dart';
@@ -31,6 +32,7 @@ Future<void> main() async {
     unawaited(InstalledAppsBridge.debugPrintSample());
   }
   await ensureDefaultChild();
+  await clearChildLinkedPrefsIfSavedCanonicalInactive();
   GenetConfig.syncToNative();
   final nightModeService = NightModeService();
   nightModeService.load();

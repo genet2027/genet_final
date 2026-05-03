@@ -89,6 +89,8 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
       }
       if (parentId == null || !mounted) {
         developer.log('Manual code connection: parentId not received (timeout?)', name: 'Sync');
+        await clearChildLinkedPrefsKeepLocalIdentity();
+        await GenetConfig.syncToNative();
         if (mounted) setState(() => _linking = false);
         return;
       }
@@ -128,6 +130,8 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
           childId: childId,
           linkCode: code,
         );
+        await clearChildLinkedPrefsKeepLocalIdentity();
+        await GenetConfig.syncToNative();
         if (mounted) {
           setState(() {
             _linking = false;
@@ -174,6 +178,8 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
           linkCode: attemptLinkCode,
         );
       }
+      await clearChildLinkedPrefsKeepLocalIdentity();
+      await GenetConfig.syncToNative();
       if (e is FirebaseException) {
         debugPrint('[GENET][LINK_CHILD][ERROR] code=${e.code} message=${e.message}');
       } else {
