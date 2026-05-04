@@ -8,6 +8,7 @@ import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
 import '../widgets/language_switcher.dart';
 import 'child_home_screen.dart';
+import 'child_link_screen.dart';
 import 'child_self_identify_screen.dart';
 import 'pin_login_screen.dart';
 
@@ -52,7 +53,7 @@ class _RoleSelectScreenState extends State<RoleSelectScreen> {
               context,
               MaterialPageRoute(
                 builder: (context) => hasProfile
-                    ? const ChildHomeScreen()
+                    ? const ChildLinkScreen()
                     : const ChildSelfIdentifyScreen(),
               ),
             );

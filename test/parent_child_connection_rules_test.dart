@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 void _resetConnectionTestHooks() {
   debugReadCanonicalChildDataForTests = null;
   debugReadCanonicalChildDataWithBoundedRetryForTests = null;
+  debugFetchCanonicalChildDocStateForTests = null;
   debugSetChildConnectionStatusFirebaseForTests = null;
   debugPreflightSavedChildCanonicalLinkResultForTests = null;
 }
@@ -116,16 +117,15 @@ void main() {
       );
     });
 
-    test('healthy canonical map from bounded read → verifiedConnected', () async {
+    test('healthy canonical fetch → verifiedConnected', () async {
       SharedPreferences.setMockInitialValues({
         'genet_linked_parent_id': 'p1',
         'genet_linked_child_id': 'c1',
       });
-      debugReadCanonicalChildDataWithBoundedRetryForTests =
-          (String p, String c, Duration t) async {
+      debugFetchCanonicalChildDocStateForTests = (String p, String c) async {
         expect(p, 'p1');
         expect(c, 'c1');
-        return _connectedDoc(parentId: 'p1', linkCode: '9999');
+        return CanonicalChildDocFetchOutcome.presentActive;
       };
       expect(
         await preflightSavedChildCanonicalLink(timeout: const Duration(seconds: 1)),
@@ -138,24 +138,34 @@ void main() {
         'genet_linked_parent_id': 'p1',
         'genet_linked_child_id': 'c1',
       });
-      debugReadCanonicalChildDataWithBoundedRetryForTests =
-          (p, c, t) async => _connectedDoc(
-                parentId: 'p1',
-                connectionStatus: 'disconnected',
-              );
+      debugFetchCanonicalChildDocStateForTests =
+          (p, c) async => CanonicalChildDocFetchOutcome.presentInactive;
       expect(
         await preflightSavedChildCanonicalLink(),
         SavedChildLinkPreflightResult.verifiedInvalidOrStale,
       );
     });
 
-    test('bounded read always null → unverifiedTransient', () async {
+    test('missing canonical doc → verifiedInvalidOrStale', () async {
       SharedPreferences.setMockInitialValues({
         'genet_linked_parent_id': 'p1',
         'genet_linked_child_id': 'c1',
       });
-      debugReadCanonicalChildDataWithBoundedRetryForTests =
-          (p, c, t) async => null;
+      debugFetchCanonicalChildDocStateForTests =
+          (p, c) async => CanonicalChildDocFetchOutcome.missing;
+      expect(
+        await preflightSavedChildCanonicalLink(timeout: const Duration(milliseconds: 200)),
+        SavedChildLinkPreflightResult.verifiedInvalidOrStale,
+      );
+    });
+
+    test('fetch inconclusive (network) → unverifiedTransient', () async {
+      SharedPreferences.setMockInitialValues({
+        'genet_linked_parent_id': 'p1',
+        'genet_linked_child_id': 'c1',
+      });
+      debugFetchCanonicalChildDocStateForTests =
+          (p, c) async => CanonicalChildDocFetchOutcome.networkFailure;
       expect(
         await preflightSavedChildCanonicalLink(timeout: const Duration(milliseconds: 200)),
         SavedChildLinkPreflightResult.unverifiedTransient,
@@ -258,17 +268,32 @@ void main() {
   });
 
   group('clearChildLinkedPrefsIfSavedCanonicalInactive', () {
-    test('null canonical read does not clear linked prefs (transient/offline)', () async {
+    test('network/timeout outcome does not clear linked prefs', () async {
       SharedPreferences.setMockInitialValues({
         kUserRoleKey: kUserRoleChild,
         'genet_linked_parent_id': 'p1',
         'genet_linked_child_id': 'c1',
       });
-      debugReadCanonicalChildDataForTests = (p, c) async => null;
+      debugFetchCanonicalChildDocStateForTests =
+          (p, c) async => CanonicalChildDocFetchOutcome.networkFailure;
       await clearChildLinkedPrefsIfSavedCanonicalInactive();
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('genet_linked_parent_id'), 'p1');
       expect(prefs.getString('genet_linked_child_id'), 'c1');
+    });
+
+    test('missing canonical doc clears linked prefs', () async {
+      SharedPreferences.setMockInitialValues({
+        kUserRoleKey: kUserRoleChild,
+        'genet_linked_parent_id': 'p1',
+        'genet_linked_child_id': 'c1',
+      });
+      debugFetchCanonicalChildDocStateForTests =
+          (p, c) async => CanonicalChildDocFetchOutcome.missing;
+      await clearChildLinkedPrefsIfSavedCanonicalInactive();
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('genet_linked_parent_id'), isNull);
+      expect(prefs.getString('genet_linked_child_id'), isNull);
     });
 
     test('inactive canonical doc clears linked prefs', () async {
@@ -277,10 +302,8 @@ void main() {
         'genet_linked_parent_id': 'p1',
         'genet_linked_child_id': 'c1',
       });
-      debugReadCanonicalChildDataForTests = (p, c) async => _connectedDoc(
-            parentId: 'p1',
-            connectionStatus: 'disconnected',
-          );
+      debugFetchCanonicalChildDocStateForTests =
+          (p, c) async => CanonicalChildDocFetchOutcome.presentInactive;
       await clearChildLinkedPrefsIfSavedCanonicalInactive();
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('genet_linked_parent_id'), isNull);
@@ -293,8 +316,8 @@ void main() {
         'genet_linked_parent_id': 'p1',
         'genet_linked_child_id': 'c1',
       });
-      debugReadCanonicalChildDataForTests =
-          (p, c) async => _connectedDoc(parentId: 'p1');
+      debugFetchCanonicalChildDocStateForTests =
+          (p, c) async => CanonicalChildDocFetchOutcome.presentActive;
       await clearChildLinkedPrefsIfSavedCanonicalInactive();
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('genet_linked_parent_id'), 'p1');
@@ -307,10 +330,8 @@ void main() {
         'genet_linked_parent_id': 'p1',
         'genet_linked_child_id': 'c1',
       });
-      debugReadCanonicalChildDataForTests = (p, c) async => _connectedDoc(
-            parentId: 'p1',
-            connectionStatus: 'disconnected',
-          );
+      debugFetchCanonicalChildDocStateForTests =
+          (p, c) async => CanonicalChildDocFetchOutcome.presentInactive;
       await clearChildLinkedPrefsIfSavedCanonicalInactive();
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('genet_linked_parent_id'), 'p1');

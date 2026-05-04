@@ -1137,18 +1137,32 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
       return;
     }
     try {
-      final raw = await readCanonicalChildData(expectedParentId, expectedChildId);
-      if (raw == null || !canonicalChildDataActiveForParent(raw, expectedParentId)) {
-        developer.log(
-          'Stale canonical reconcile: doc missing or not connected for prefs; clearing local link',
-          name: 'Sync',
-        );
-        await _handleDisconnected();
-      } else if (mounted) {
-        setState(() => _isVerifyingConnection = false);
+      final outcome = await fetchCanonicalChildDocState(
+        parentId: expectedParentId,
+        childId: expectedChildId,
+        timeout: const Duration(seconds: 12),
+      );
+      switch (outcome) {
+        case CanonicalChildDocFetchOutcome.networkFailure:
+          developer.log(
+            'Stale canonical reconcile: fetch inconclusive (network); skipping disconnect',
+            name: 'Sync',
+          );
+          if (mounted) setState(() => _isVerifyingConnection = false);
+          return;
+        case CanonicalChildDocFetchOutcome.missing:
+        case CanonicalChildDocFetchOutcome.presentInactive:
+          developer.log(
+            'Stale canonical reconcile: doc missing or not connected for prefs; clearing local link',
+            name: 'Sync',
+          );
+          await _handleDisconnected();
+          return;
+        case CanonicalChildDocFetchOutcome.presentActive:
+          if (mounted) setState(() => _isVerifyingConnection = false);
       }
     } catch (e, st) {
-      developer.log('Stale canonical reconcile read failed: $e $st', name: 'Sync');
+      developer.log('Stale canonical reconcile unexpected: $e $st', name: 'Sync');
       if (mounted) setState(() => _isVerifyingConnection = false);
     }
   }

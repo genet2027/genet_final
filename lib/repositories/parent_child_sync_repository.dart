@@ -485,6 +485,53 @@ Future<Map<String, dynamic>?> readCanonicalChildData(
   return snap.data();
 }
 
+/// Outcome of a single authoritative `.get()` on the canonical child document.
+///
+/// Used for startup routing and sanitize so **missing** docs can be distinguished from
+/// **network/timeout** failures (both historically surfaced as `null` data).
+enum CanonicalChildDocFetchOutcome {
+  /// `.get()` threw or timed out — do not infer doc existence; do not clear prefs as stale.
+  networkFailure,
+  /// Snapshot exists with `exists == false`.
+  missing,
+  /// Document exists but fails [canonicalChildDataActiveForParent] for the saved parent id.
+  presentInactive,
+  /// Connected for the expected parent id.
+  presentActive,
+}
+
+/// One-shot fetch with timeout: distinguishes missing vs inactive vs active vs inconclusive errors.
+Future<CanonicalChildDocFetchOutcome> fetchCanonicalChildDocState({
+  required String parentId,
+  required String childId,
+  Duration timeout = const Duration(seconds: 4),
+}) async {
+  final p = normalizeIdentifier(parentId);
+  final c = normalizeIdentifier(childId);
+  if (p == null || c == null) return CanonicalChildDocFetchOutcome.missing;
+
+  final testHook = debugFetchCanonicalChildDocStateForTests;
+  if (testHook != null) return testHook(p, c);
+
+  try {
+    final snap = await _childDocRef(p, c).get().timeout(timeout);
+    if (!snap.exists || snap.data() == null) {
+      return CanonicalChildDocFetchOutcome.missing;
+    }
+    final data = snap.data()!;
+    if (canonicalChildDataActiveForParent(data, p)) {
+      return CanonicalChildDocFetchOutcome.presentActive;
+    }
+    return CanonicalChildDocFetchOutcome.presentInactive;
+  } on TimeoutException catch (e, st) {
+    developer.log('fetchCanonicalChildDocState: timeout $e $st', name: 'Sync');
+    return CanonicalChildDocFetchOutcome.networkFailure;
+  } catch (e, st) {
+    developer.log('fetchCanonicalChildDocState: $e $st', name: 'Sync');
+    return CanonicalChildDocFetchOutcome.networkFailure;
+  }
+}
+
 /// Bounded server reads for startup preflight (transient null / offline).
 Future<Map<String, dynamic>?> readCanonicalChildDataWithBoundedRetry({
   required String parentId,
@@ -521,9 +568,9 @@ Future<Map<String, dynamic>?> readCanonicalChildDataWithBoundedRetry({
 enum SavedChildLinkPreflightResult {
   /// Canonical doc exists and is connected for the saved parent id.
   verifiedConnected,
-  /// Doc shows disconnected / wrong parent, or saved prefs pair is unusable.
+  /// Canonical doc **missing** (`exists == false`), inactive/disconnected, wrong parent, or saved prefs unusable.
   verifiedInvalidOrStale,
-  /// Doc missing or unreadable within [timeout]; proceed to child home and rely on stream + stale reconcile.
+  /// Canonical `.get()` inconclusive (network/timeout); open child home in verifying mode (stream + stale reconcile).
   unverifiedTransient,
 }
 
@@ -549,6 +596,15 @@ typedef DebugReadCanonicalBoundedRetryTestHook = Future<Map<String, dynamic>?> F
 DebugReadCanonicalBoundedRetryTestHook? debugReadCanonicalChildDataWithBoundedRetryForTests;
 
 @visibleForTesting
+typedef DebugFetchCanonicalChildDocStateTestHook = Future<CanonicalChildDocFetchOutcome> Function(
+  String normalizedParentId,
+  String normalizedChildId,
+);
+
+@visibleForTesting
+DebugFetchCanonicalChildDocStateTestHook? debugFetchCanonicalChildDocStateForTests;
+
+@visibleForTesting
 typedef DebugSetChildConnectionStatusTestHook = Future<void> Function(
   String parentId,
   String childId,
@@ -571,8 +627,8 @@ Future<void> clearChildLinkedPrefsKeepLocalIdentity() async {
 }
 
 /// Cold start (e.g. after [initializeAppBootstrap]): if role is child and saved link prefs
-/// reference a canonical doc that **exists** but is not active for that parent, clear link prefs.
-/// When the read returns null (offline / not yet loaded), prefs are left intact so the child UI can verify.
+/// reference a canonical doc that is **missing** or **not active** for that parent, clear link prefs.
+/// Network/timeout failures ([CanonicalChildDocFetchOutcome.networkFailure]) do not clear prefs.
 Future<void> clearChildLinkedPrefsIfSavedCanonicalInactive() async {
   try {
     final role = await getUserRole();
@@ -580,16 +636,23 @@ Future<void> clearChildLinkedPrefsIfSavedCanonicalInactive() async {
     final p = normalizeIdentifier(await getLinkedParentId());
     final c = normalizeIdentifier(await getLinkedChildId());
     if (p == null || c == null) return;
-    final data = await readCanonicalChildData(p, c);
-    if (data != null && !canonicalChildDataActiveForParent(data, p)) {
-      await clearChildLinkedPrefsKeepLocalIdentity();
+    final outcome = await fetchCanonicalChildDocState(parentId: p, childId: c);
+    switch (outcome) {
+      case CanonicalChildDocFetchOutcome.presentActive:
+      case CanonicalChildDocFetchOutcome.networkFailure:
+        return;
+      case CanonicalChildDocFetchOutcome.missing:
+      case CanonicalChildDocFetchOutcome.presentInactive:
+        await clearChildLinkedPrefsKeepLocalIdentity();
     }
   } catch (e, st) {
     developer.log('clearChildLinkedPrefsIfSavedCanonicalInactive: $e $st', name: 'Sync');
   }
 }
 
-/// One bounded canonical check for saved `genet_linked_parent_id` + `genet_linked_child_id`.
+/// Single canonical `.get()` (with timeout) for saved `genet_linked_parent_id` + `genet_linked_child_id`.
+///
+/// Confirms connected **only** when [fetchCanonicalChildDocState] returns [CanonicalChildDocFetchOutcome.presentActive].
 Future<SavedChildLinkPreflightResult> preflightSavedChildCanonicalLink({
   Duration timeout = const Duration(seconds: 4),
 }) async {
@@ -602,33 +665,25 @@ Future<SavedChildLinkPreflightResult> preflightSavedChildCanonicalLink({
   if (preflightQuick != null) {
     return preflightQuick();
   }
-  Map<String, dynamic>? data;
-  try {
-    data = await readCanonicalChildDataWithBoundedRetry(
-      parentId: p,
-      childId: c,
-      timeout: timeout,
-    );
-  } catch (e, st) {
-    developer.log('preflightSavedChildCanonicalLink: unexpected $e $st', name: 'Sync');
-    return SavedChildLinkPreflightResult.unverifiedTransient;
+  final outcome = await fetchCanonicalChildDocState(parentId: p, childId: c, timeout: timeout);
+  switch (outcome) {
+    case CanonicalChildDocFetchOutcome.presentActive:
+      developer.log('preflightSavedChildCanonicalLink: verified connected parent=$p child=$c', name: 'Sync');
+      return SavedChildLinkPreflightResult.verifiedConnected;
+    case CanonicalChildDocFetchOutcome.missing:
+    case CanonicalChildDocFetchOutcome.presentInactive:
+      developer.log(
+        'preflightSavedChildCanonicalLink: invalid/stale canonical for saved prefs parent=$p child=$c outcome=$outcome',
+        name: 'Sync',
+      );
+      return SavedChildLinkPreflightResult.verifiedInvalidOrStale;
+    case CanonicalChildDocFetchOutcome.networkFailure:
+      developer.log(
+        'preflightSavedChildCanonicalLink: unverified (fetch inconclusive within ${timeout.inMilliseconds}ms) parent=$p child=$c',
+        name: 'Sync',
+      );
+      return SavedChildLinkPreflightResult.unverifiedTransient;
   }
-  if (data == null) {
-    developer.log(
-      'preflightSavedChildCanonicalLink: unverified (no doc within ${timeout.inMilliseconds}ms) parent=$p child=$c',
-      name: 'Sync',
-    );
-    return SavedChildLinkPreflightResult.unverifiedTransient;
-  }
-  if (!canonicalChildDataActiveForParent(data, p)) {
-    developer.log(
-      'preflightSavedChildCanonicalLink: invalid/stale canonical for saved prefs parent=$p child=$c',
-      name: 'Sync',
-    );
-    return SavedChildLinkPreflightResult.verifiedInvalidOrStale;
-  }
-  developer.log('preflightSavedChildCanonicalLink: verified connected parent=$p child=$c', name: 'Sync');
-  return SavedChildLinkPreflightResult.verifiedConnected;
 }
 
 /// Whether raw canonical child document map indicates an active link for [expectedParentId].

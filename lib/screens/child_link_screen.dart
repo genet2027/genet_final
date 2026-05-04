@@ -35,7 +35,11 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
   void initState() {
     super.initState();
     if (kDebugMode) {
-      debugFirebaseState();
+      try {
+        debugFirebaseState();
+      } catch (_) {
+        // Widget tests / environments without [Firebase.initializeApp]; ignore.
+      }
     }
   }
 
