@@ -34,6 +34,33 @@ import 'content_library_screen.dart';
 import 'role_select_screen.dart';
 import 'school_schedule_screen.dart';
 
+/// MVP child-initiated disconnect confirmation dialog (widget-tested from [ChildHomeScreen]).
+Future<bool> showChildMvpDisconnectConfirmation(BuildContext context) async {
+  final result = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => Directionality(
+      textDirection: TextDirection.rtl,
+      child: AlertDialog(
+        title: const Text('ניתוק חיבור'),
+        content: const Text('האם אתה בטוח שברצונך לנתק את החיבור להורה?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('ביטול'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            child: const Text('נתק'),
+          ),
+        ],
+      ),
+    ),
+  );
+  return result == true;
+}
+
 /// Maps local sync scheduling reasons to backend [syncRelevantApps] trigger strings.
 String _mapInstalledAppsBackendTrigger(String reason) {
   return switch (reason) {
@@ -1247,7 +1274,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
   // ---------------------------------------------------------------------------
   // Disconnect: native teardown, identity cleanup, local protection reset
   // ---------------------------------------------------------------------------
-  Future<void> _handleDisconnected() async {
+  Future<void> _handleDisconnected({bool navigateToChildLinkScreen = false}) async {
     if (Platform.isAndroid) {
       await GenetVpn.stopVpn();
       debugPrint('[GenetVpn] child stopVpn triggered (disconnected from parent)');
@@ -1271,13 +1298,41 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     _resetDisconnectedProtectionState();
     unawaited(_clearVpnProtectionLostInNative());
     unawaited(GenetConfig.setNightModeActive(false));
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('הקישור להורה הוסר. ניתן להתחבר מחדש.'),
-        ),
+    if (!mounted) return;
+    if (navigateToChildLinkScreen) {
+      await GenetConfig.syncToNative();
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(builder: (_) => const ChildLinkScreen()),
       );
+      return;
     }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('הקישור להורה הוסר. ניתן להתחבר מחדש.'),
+      ),
+    );
+  }
+
+  Future<void> _onMvpChildDisconnectPressed() async {
+    final confirmed = await showChildMvpDisconnectConfirmation(context);
+    if (!confirmed || !mounted) return;
+
+    final p = normalizeIdentifier(await getLinkedParentId());
+    final c = normalizeIdentifier(await getLinkedChildId());
+    if (p != null && c != null) {
+      try {
+        await setChildConnectionStatusFirebase(p, c, 'disconnected');
+      } catch (e, st) {
+        developer.log(
+          'Child MVP disconnect: canonical status write failed (ignored): $e $st',
+          name: 'Sync',
+        );
+      }
+    }
+
+    if (!mounted) return;
+    await _handleDisconnected(navigateToChildLinkScreen: true);
   }
 
   void _disposeChildHomeTimers() {
@@ -1626,41 +1681,69 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                   child: Padding(
                     padding: const EdgeInsets.all(16),
-                    child: Row(
-                      textDirection: TextDirection.rtl,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Icon(Icons.link, color: AppTheme.primaryBlue),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                connectedParentHeadlineForChild(
-                                  isCanonicallyConnected: showConnectedCard,
-                                  parentProfileDisplayLine: _parentIdentityDisplaySuffix,
-                                ),
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 16,
-                                ),
-                                textDirection: TextDirection.rtl,
-                              ),
-                              if ((_linkedNameForDisplay ?? linkedName) != null && (_linkedNameForDisplay ?? linkedName)!.isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 6),
-                                  child: Text(
-                                    (_linkedNameForDisplay ?? linkedName)!,
+                        Row(
+                          textDirection: TextDirection.rtl,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.link, color: AppTheme.primaryBlue),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'מחובר להורה',
                                     style: TextStyle(
-                                      fontSize: 14,
-                                      color: Colors.grey.shade700,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 18,
+                                      color: Colors.grey.shade900,
                                     ),
                                     textDirection: TextDirection.rtl,
                                   ),
-                                ),
-                            ],
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    connectedParentHeadlineForChild(
+                                      isCanonicallyConnected: showConnectedCard,
+                                      parentProfileDisplayLine: _parentIdentityDisplaySuffix,
+                                    ),
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      color: Colors.grey.shade800,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                    textDirection: TextDirection.rtl,
+                                  ),
+                                  if ((_linkedNameForDisplay ?? linkedName) != null &&
+                                      (_linkedNameForDisplay ?? linkedName)!.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 8),
+                                      child: Text(
+                                        (_linkedNameForDisplay ?? linkedName)!,
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          color: Colors.grey.shade700,
+                                        ),
+                                        textDirection: TextDirection.rtl,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        OutlinedButton(
+                          onPressed: _onMvpChildDisconnectPressed,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.red.shade800,
+                            side: BorderSide(color: Colors.red.shade400),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
                           ),
+                          child: const Text('נתק חיבור'),
                         ),
                       ],
                     ),
