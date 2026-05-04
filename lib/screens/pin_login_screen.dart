@@ -6,7 +6,10 @@ import 'package:flutter/services.dart';
 import '../core/config/genet_config.dart';
 import '../core/user_role.dart';
 import '../core/pin_storage.dart';
+import '../repositories/parent_child_sync_repository.dart';
+import '../repositories/parent_profile_repository.dart';
 import '../theme/app_theme.dart';
+import 'parent_profile_setup_screen.dart';
 import 'parent_shell.dart';
 
 /// מסך הזנת PIN לאימות הורה
@@ -21,6 +24,29 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
   final TextEditingController _pinController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
 
+  Future<void> _navigateAfterSuccessfulPin() async {
+    final parentId = await getOrCreateParentId();
+    final profile = await getParentProfile(parentId);
+    if (!mounted) return;
+    if (!isParentProfileComplete(profile)) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => ParentProfileSetupScreen(
+            completedBuilder: (_) => const ParentShell(),
+          ),
+        ),
+      );
+    } else {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const ParentShell(),
+        ),
+      );
+    }
+  }
+
   void _checkPin() async {
     final enteredPin = _pinController.text;
     final ok = await PinStorage.verifyPin(enteredPin);
@@ -29,12 +55,7 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
       if (Platform.isAndroid) GenetConfig.setPin(enteredPin);
       await GenetConfig.commitUserRole(kUserRoleParent);
       if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => const ParentShell(),
-          ),
-        );
+        await _navigateAfterSuccessfulPin();
       }
     } else {
       if (mounted) {

@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import '../core/config/genet_config.dart';
 import '../core/user_role.dart';
 import '../repositories/parent_child_sync_repository.dart';
+import '../repositories/parent_profile_repository.dart';
 import '../theme/app_theme.dart';
 import 'parent_dashboard_tab.dart';
+import 'parent_profile_setup_screen.dart';
 import 'required_permissions_screen.dart';
 import 'settings_screen.dart';
 
@@ -22,6 +24,7 @@ class _ParentShellState extends State<ParentShell> with WidgetsBindingObserver {
   int _selectedIndex = 0;
   bool _showingRequiredPermissions = false;
   Timer? _permissionCheckTimer;
+  bool _parentProfileCheckInFlight = false;
 
   @override
   void initState() {
@@ -29,8 +32,32 @@ class _ParentShellState extends State<ParentShell> with WidgetsBindingObserver {
     GenetConfig.commitUserRole(kUserRoleParent);
     getOrCreateParentId();
     WidgetsBinding.instance.addObserver(this);
-    _checkPermissionsAndShowIfNeeded();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _ensureParentProfileIfNeeded();
+      if (mounted) await _checkPermissionsAndShowIfNeeded();
+    });
     _permissionCheckTimer = Timer.periodic(const Duration(seconds: 45), (_) => _checkPermissionsAndShowIfNeeded());
+  }
+
+  Future<void> _ensureParentProfileIfNeeded() async {
+    if (!mounted || _parentProfileCheckInFlight) return;
+    _parentProfileCheckInFlight = true;
+    try {
+      final parentId = await getOrCreateParentId();
+      final profile = await getParentProfile(parentId);
+      if (!mounted) return;
+      if (!isParentProfileComplete(profile)) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute<void>(
+            builder: (_) => ParentProfileSetupScreen(
+              completedBuilder: (_) => const ParentShell(),
+            ),
+          ),
+        );
+      }
+    } finally {
+      _parentProfileCheckInFlight = false;
+    }
   }
 
   @override

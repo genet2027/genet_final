@@ -1,6 +1,7 @@
 import 'dart:developer' as developer;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/parent_profile.dart';
 
@@ -15,6 +16,10 @@ DocumentReference<Map<String, dynamic>> _parentDocRef(String parentId) {
 Future<ParentProfile?> getParentProfile(String parentId) async {
   final id = parentId.trim();
   if (id.isEmpty) return null;
+  final testHook = debugGetParentProfileForTests;
+  if (testHook != null) {
+    return testHook(id);
+  }
   try {
     final snap = await _parentDocRef(id).get();
     if (!snap.exists || snap.data() == null) return null;
@@ -37,6 +42,12 @@ Future<void> saveParentProfile({
   final ln = lastName.trim();
   final displayName = '$fn $ln'.trim();
   if (id.isEmpty) return;
+
+  final testHook = debugSaveParentProfileForTests;
+  if (testHook != null) {
+    await testHook(parentId: id, firstName: fn, lastName: ln);
+    return;
+  }
 
   final ref = _parentDocRef(id);
   final snap = await ref.get();
@@ -61,3 +72,16 @@ Future<void> saveParentProfile({
 bool isParentProfileComplete(ParentProfile? profile) {
   return profile != null && profile.isComplete;
 }
+
+// --- Test-only hooks (deterministic widget tests; always null in production) ---
+
+@visibleForTesting
+Future<ParentProfile?> Function(String normalizedParentId)? debugGetParentProfileForTests;
+
+@visibleForTesting
+Future<void> Function({
+  required String parentId,
+  required String firstName,
+  required String lastName,
+})?
+debugSaveParentProfileForTests;
