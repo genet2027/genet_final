@@ -16,11 +16,11 @@ DocumentReference<Map<String, dynamic>> _parentDocRef(String parentId) {
 Future<ParentProfile?> getParentProfile(String parentId) async {
   final id = parentId.trim();
   if (id.isEmpty) return null;
-  final testHook = debugGetParentProfileForTests;
-  if (testHook != null) {
-    return testHook(id);
-  }
   try {
+    final testHook = debugGetParentProfileForTests;
+    if (testHook != null) {
+      return await testHook(id);
+    }
     final snap = await _parentDocRef(id).get();
     if (!snap.exists || snap.data() == null) return null;
     return ParentProfile.fromMap(id, snap.data()!);
@@ -71,6 +71,29 @@ Future<void> saveParentProfile({
 /// True only when [profile] is non-null and both names are non-empty after trim.
 bool isParentProfileComplete(ParentProfile? profile) {
   return profile != null && profile.isComplete;
+}
+
+/// Line to show after "מחובר להורה: " on the child home card (`null` ⇒ short label only).
+///
+/// Uses stored [ParentProfile.displayName] when non-empty, otherwise [ParentProfile.computedDisplayName].
+String? parentProfileDisplayLineForChildUi(ParentProfile? profile) {
+  if (profile == null) return null;
+  final stored = profile.displayName?.trim();
+  if (stored != null && stored.isNotEmpty) return stored;
+  final computed = profile.computedDisplayName;
+  if (computed.isNotEmpty) return computed;
+  return null;
+}
+
+/// Hebrew headline for the child connection card when [isCanonicallyConnected] is true.
+String connectedParentHeadlineForChild({
+  required bool isCanonicallyConnected,
+  String? parentProfileDisplayLine,
+}) {
+  if (!isCanonicallyConnected) return '';
+  final s = parentProfileDisplayLine?.trim();
+  if (s != null && s.isNotEmpty) return 'מחובר להורה: $s';
+  return 'מחובר להורה';
 }
 
 // --- Test-only hooks (deterministic widget tests; always null in production) ---

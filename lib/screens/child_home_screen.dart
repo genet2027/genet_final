@@ -19,6 +19,7 @@ import '../models/child_model.dart';
 import '../models/parent_message.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
+import '../repositories/parent_profile_repository.dart';
 import '../models/installed_app.dart';
 import '../services/installed_apps_bridge.dart';
 import '../services/installed_apps_periodic_fallback.dart';
@@ -132,6 +133,9 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
   /// Single source of truth from Firebase: true = connected, false = disconnected, null = unknown / loading
   bool? _firebaseConnectionStatus;
   String? _linkedNameForDisplay;
+
+  /// From `genet_parents/{parentId}` after canonical connection; does not affect connection truth.
+  String? _parentIdentityDisplaySuffix;
 
   /// True until link state is resolved from Firestore (or known unlinked with no prefs).
   /// While true, UI must not show the disconnected (amber) card for a null connection snapshot.
@@ -948,12 +952,33 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     GenetConfig.syncToNativeAfterRemoteChildDoc();
   }
 
+  void _scheduleParentIdentityRefresh(String rawParentId) {
+    unawaited(_loadParentIdentityForDisplay(rawParentId));
+  }
+
+  Future<void> _loadParentIdentityForDisplay(String rawParentId) async {
+    final pid = normalizeIdentifier(rawParentId);
+    if (pid == null) return;
+    try {
+      final profile = await getParentProfile(pid);
+      if (!mounted) return;
+      if (_firebaseConnectionStatus != true) return;
+      final line = parentProfileDisplayLineForChildUi(profile);
+      setState(() => _parentIdentityDisplaySuffix = line);
+    } catch (_) {
+      if (!mounted) return;
+      if (_firebaseConnectionStatus != true) return;
+      setState(() => _parentIdentityDisplaySuffix = null);
+    }
+  }
+
   void _resetDisconnectedProtectionState() {
     _childProtectionFlow.resetAfterDisconnect();
     setState(() {
       _firebaseConnectionStatus = false;
       _isVerifyingConnection = false;
       _linkedNameForDisplay = null;
+      _parentIdentityDisplaySuffix = null;
       _lastSyncedForVpn = null;
       _installedAppsSyncQueued = false;
       _installedAppsEmptyRetryUsed = false;
@@ -1027,6 +1052,10 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     if (isConnected) {
       developer.log('Child connected (from Firebase)', name: 'Sync');
       final wasConnected = _firebaseConnectionStatus == true;
+      if (!wasConnected) {
+        _parentIdentityDisplaySuffix = null;
+        _scheduleParentIdentityRefresh(expectedParentId);
+      }
       if (!wasConnected && Platform.isAndroid) {
         _scheduleInstalledAppsSync(
           reason: 'firebase_connected',
@@ -1607,9 +1636,12 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Text(
-                                'מחובר להורה',
-                                style: TextStyle(
+                              Text(
+                                connectedParentHeadlineForChild(
+                                  isCanonicallyConnected: showConnectedCard,
+                                  parentProfileDisplayLine: _parentIdentityDisplaySuffix,
+                                ),
+                                style: const TextStyle(
                                   fontWeight: FontWeight.w600,
                                   fontSize: 16,
                                 ),
