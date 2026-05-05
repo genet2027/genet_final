@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 
 import '../models/child_entity.dart';
 import '../repositories/child_link_status_repository.dart';
+import '../repositories/child_vpn_health_parse.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
 import '../widgets/natural_text_field.dart';
+import '../widgets/parent_vpn_health_indicator.dart';
 import 'add_child_by_link_screen.dart';
 
 /// Parent: list children, select active, add child, edit child, show QR + manual code for linking.
@@ -23,6 +25,7 @@ class _ChildrenManagementScreenState extends State<ChildrenManagementScreen> {
   List<ChildEntity> _children = [];
   String? _selectedChildId;
   bool _loading = true;
+  String? _parentId;
   StreamSubscription<List<ChildEntity>>? _childrenStreamSub;
 
   Future<void> _load() async {
@@ -59,6 +62,7 @@ class _ChildrenManagementScreenState extends State<ChildrenManagementScreen> {
     _load();
     getOrCreateParentId().then((parentId) {
       if (!mounted) return;
+      setState(() => _parentId = parentId);
       developer.log('PARENT_READ_PATH = genet_parents/$parentId/children', name: 'Sync');
       developer.log('PARENT_READ_PARENT_ID = $parentId', name: 'Sync');
       _childrenStreamSub = watchParentChildrenStream(parentId).listen((list) {
@@ -167,6 +171,7 @@ class _ChildrenManagementScreenState extends State<ChildrenManagementScreen> {
                   ),
                   const SizedBox(height: 12),
                   ..._children.map((child) => _ChildTile(
+                        parentId: _parentId,
                         child: child,
                         isActive: _selectedChildId == child.childId,
                         onTap: () => _selectChild(child.childId),
@@ -322,7 +327,65 @@ class _ChildrenManagementScreenState extends State<ChildrenManagementScreen> {
   }
 }
 
+/// Live VPN health from canonical child doc (parent read-only).
+class _ChildFirestoreVpnHealth extends StatefulWidget {
+  const _ChildFirestoreVpnHealth({
+    required this.parentId,
+    required this.childId,
+  });
+
+  final String parentId;
+  final String childId;
+
+  @override
+  State<_ChildFirestoreVpnHealth> createState() => _ChildFirestoreVpnHealthState();
+}
+
+class _ChildFirestoreVpnHealthState extends State<_ChildFirestoreVpnHealth> {
+  StreamSubscription<Map<String, dynamic>?>? _sub;
+  ChildVpnHealthParsed _health = parseChildVpnHealth(
+    vpnStatusRaw: null,
+    now: DateTime.now(),
+  );
+  String? _applyStatus;
+
+  @override
+  void initState() {
+    super.initState();
+    _sub =
+        watchParentChildDocStream(widget.parentId, widget.childId).listen((data) {
+      if (!mounted) return;
+      final vpnRaw = data?['vpnStatus'];
+      final apply = data?['vpnApplyStatus'] as String?;
+      final legacy = vpnRaw is String ? vpnRaw : null;
+      setState(() {
+        _health = parseChildVpnHealth(
+          vpnStatusRaw: vpnRaw,
+          now: DateTime.now(),
+        );
+        _applyStatus = apply ?? legacy;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ParentVpnHealthIndicator(
+      compact: true,
+      health: _health,
+      applyStatusLabel: _applyStatus,
+    );
+  }
+}
+
 class _ChildTile extends StatelessWidget {
+  final String? parentId;
   final ChildEntity child;
   final bool isActive;
   final VoidCallback onTap;
@@ -330,6 +393,7 @@ class _ChildTile extends StatelessWidget {
   final VoidCallback onRemove;
 
   const _ChildTile({
+    this.parentId,
     required this.child,
     required this.isActive,
     required this.onTap,
@@ -395,6 +459,17 @@ class _ChildTile extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (parentId != null &&
+                        parentId!.isNotEmpty &&
+                        child.isConnected &&
+                        child.connectionStatus == ChildConnectionStatus.connected)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: _ChildFirestoreVpnHealth(
+                          parentId: parentId!,
+                          childId: child.childId,
+                        ),
+                      ),
                     if (isActive)
                       const Padding(
                         padding: EdgeInsets.only(top: 2),

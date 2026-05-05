@@ -10,9 +10,11 @@ import '../core/vpn_remote_child.dart';
 import '../core/pin_storage.dart';
 import '../core/user_role.dart';
 import '../features/blocked_apps/blocked_package_matching.dart';
+import '../repositories/child_vpn_health_parse.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
+import '../widgets/parent_vpn_health_indicator.dart';
 import '../widgets/rounded_card.dart';
 import 'backup_support_screen.dart';
 import 'night_mode_settings_screen.dart';
@@ -36,8 +38,12 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   StreamSubscription<Map<String, dynamic>?>? _parentVpnDocSub;
   StreamSubscription<String?>? _selectedChildIdSub;
   String? _boundSelectedChildId;
-  /// Last apply outcome from child doc ([vpnApplyStatus], legacy string [vpnStatus]); parent device does not use local VPN for this.
-  String? _parentRemoteVpnStatus;
+  /// Policy apply ping only (`vpnApplyStatus` / legacy string) — secondary label, not health.
+  String? _parentRemoteVpnApplyStatus;
+  ChildVpnHealthParsed _parentVpnHealth = parseChildVpnHealth(
+    vpnStatusRaw: null,
+    now: DateTime.now(),
+  );
 
   Future<String?> _resolveSelectedChildId() async {
     final selectedChildId = normalizeIdentifier(await getSelectedChildId());
@@ -62,7 +68,12 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     final cid = await _resolveSelectedChildId();
     _boundSelectedChildId = cid;
     if (pid == null || cid == null) {
-      if (mounted) setState(() => _parentRemoteVpnStatus = 'off');
+      if (mounted) {
+        setState(() {
+          _parentRemoteVpnApplyStatus = null;
+          _parentVpnHealth = parseChildVpnHealth(vpnStatusRaw: null, now: DateTime.now());
+        });
+      }
       return;
     }
     debugPrint('[GenetDebug] PARENT ID: $pid');
@@ -70,29 +81,25 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     _parentVpnDocSub = watchParentChildDocStream(pid, cid).listen((data) {
       if (!mounted) return;
       final vpnStatusField = data?['vpnStatus'];
-      final raw = data?['vpnApplyStatus'] as String? ??
-          (vpnStatusField is String ? vpnStatusField : null);
-      setState(() => _parentRemoteVpnStatus = raw ?? 'off');
+      final applyRaw = data?['vpnApplyStatus'] as String?;
+      final legacyApply = vpnStatusField is String ? vpnStatusField : null;
+      final apply = applyRaw ?? legacyApply;
+      final health = parseChildVpnHealth(
+        vpnStatusRaw: vpnStatusField,
+        now: DateTime.now(),
+      );
+      setState(() {
+        _parentRemoteVpnApplyStatus = apply ?? 'off';
+        _parentVpnHealth = health;
+      });
     });
   }
 
-  Widget _buildParentVpnDot() {
-    final s = _parentRemoteVpnStatus ?? 'off';
-    final Color c;
-    switch (s) {
-      case 'on':
-        c = Colors.green;
-        break;
-      case 'error':
-        c = Colors.amber.shade700;
-        break;
-      default:
-        c = Colors.red;
-    }
-    return Container(
-      width: 12,
-      height: 12,
-      decoration: BoxDecoration(color: c, shape: BoxShape.circle),
+  Widget _buildParentVpnHealthHeader() {
+    return ParentVpnHealthIndicator(
+      compact: true,
+      health: _parentVpnHealth,
+      applyStatusLabel: _parentRemoteVpnApplyStatus,
     );
   }
 
@@ -500,7 +507,13 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
                     ),
                   ),
                 ),
-                if (_isParentRole == true) _buildParentVpnDot(),
+                if (_isParentRole == true)
+                  Flexible(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: _buildParentVpnHealthHeader(),
+                    ),
+                  ),
               ],
             ),
           ),
