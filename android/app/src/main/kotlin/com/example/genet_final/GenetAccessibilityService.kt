@@ -76,19 +76,27 @@ class GenetAccessibilityService : AccessibilityService() {
         return true
     }
 
-    private fun consumeForegroundPermissionControllerOverlay(foregroundPackage: String): Boolean {
+    /** When permission lock is off, permission/installer UIs are allowed (legacy). When on, do not consume — enforcement runs below. */
+    private fun consumeForegroundPermissionControllerOverlay(
+        foregroundPackage: String,
+        permissionLockEnabled: Boolean,
+    ): Boolean {
+        if (permissionLockEnabled) return false
         if (foregroundPackage !in PERMISSION_CONTROLLER_PACKAGES) return false
         Log.d("GENET", "Skipping block for permission screen")
         clearBlockStateAndHideOverlay(foregroundPackage)
         return true
     }
 
+    /** Fast HOME for Settings only when permission lock is disabled (legacy). */
     private fun consumeSettingsWindowHomeOverlay(
         event: AccessibilityEvent,
         eventType: Int,
         foregroundPackage: String,
         genetPackage: String,
+        permissionLockEnabled: Boolean,
     ): Boolean {
+        if (permissionLockEnabled) return false
         val pkgFromEvent = event.packageName?.toString()
         val mayBlockSettings = pkgFromEvent != null &&
             pkgFromEvent.isNotBlank() &&
@@ -103,7 +111,11 @@ class GenetAccessibilityService : AccessibilityService() {
         return true
     }
 
-    private fun consumeForegroundSettingsFamilyOverlay(foregroundPackage: String): Boolean {
+    private fun consumeForegroundSettingsFamilyOverlay(
+        foregroundPackage: String,
+        permissionLockEnabled: Boolean,
+    ): Boolean {
+        if (permissionLockEnabled) return false
         if (foregroundPackage !in SETTINGS_PACKAGES && foregroundPackage !in PERMISSION_CONTROLLER_PACKAGES) return false
         clearBlockStateAndHideOverlay(foregroundPackage)
         return true
@@ -137,7 +149,7 @@ class GenetAccessibilityService : AccessibilityService() {
             return
         }
         if (debouncedRunnableHideIfReturnedToGenet()) return
-        if (debouncedRunnableHideIfSettingsOrPermissionForeground()) return
+        if (debouncedRunnableHideIfSettingsOrPermissionForeground(runnablePrefs)) return
         if (!lastShouldShowOverlay) {
             overlayBlockSessionActive = false
             overlayManager.hide()
@@ -154,7 +166,8 @@ class GenetAccessibilityService : AccessibilityService() {
         return true
     }
 
-    private fun debouncedRunnableHideIfSettingsOrPermissionForeground(): Boolean {
+    private fun debouncedRunnableHideIfSettingsOrPermissionForeground(prefs: android.content.SharedPreferences): Boolean {
+        if (prefs.getBoolean(KEY_PERMISSION_LOCK_ENABLED, false)) return false
         val pkg = lastForegroundPkg
         if (pkg == null) return false
         if (pkg !in SETTINGS_PACKAGES && pkg !in PERMISSION_CONTROLLER_PACKAGES) return false
@@ -198,15 +211,33 @@ class GenetAccessibilityService : AccessibilityService() {
         overlayBlockSessionActive = true
     }
 
-    private fun scheduleDebouncedBlockedHandling(prefs: android.content.SharedPreferences, foregroundPackage: String) {
+    private fun scheduleDebouncedBlockedHandling(
+        prefs: android.content.SharedPreferences,
+        foregroundPackage: String,
+        event: AccessibilityEvent,
+        permissionLockEnabled: Boolean,
+    ) {
+        val eventTextSample = try {
+            event.text?.joinToString(" ") { it?.toString() ?: "" }
+        } catch (_: Exception) {
+            ""
+        }
+        val permissionLockBlock = PermissionLockProtectedAreas.shouldBlockForegroundForPermissionLock(
+            permissionLockEnabled = permissionLockEnabled,
+            packageName = foregroundPackage,
+            className = event.className?.toString(),
+            eventText = eventTextSample,
+            genetPackageName = applicationContext.packageName,
+            defaultLauncherPackage = defaultLauncherPackage,
+        )
         val whitelisted = isWhitelisted(foregroundPackage)
         val sleepLockRestrictionActive = isSleepLockRestrictionActive(prefs)
         val blockedSet = getBlockedPackagesSet(prefs)
         val blockedApp = !whitelisted &&
-            (sleepLockRestrictionActive || blockedSet.contains(foregroundPackage))
+            (sleepLockRestrictionActive || blockedSet.contains(foregroundPackage) || permissionLockBlock)
         Log.d(
             TAG,
-            "foreground=$foregroundPackage blocked=$blockedApp isGenetPackage=${Whitelist.isGenetApp(this, foregroundPackage)} tempApproved=false sleepLockRestrictionActive=$sleepLockRestrictionActive",
+            "foreground=$foregroundPackage blocked=$blockedApp isGenetPackage=${Whitelist.isGenetApp(this, foregroundPackage)} tempApproved=false sleepLockRestrictionActive=$sleepLockRestrictionActive permissionLock=$permissionLockEnabled permissionLockBlock=$permissionLockBlock",
         )
 
         lastForegroundPkg = foregroundPackage
@@ -231,6 +262,7 @@ class GenetAccessibilityService : AccessibilityService() {
             return
         }
         Log.d("GENET", "Child mode active - applying restrictions")
+        val permissionLockEnabled = prefs.getBoolean(KEY_PERMISSION_LOCK_ENABLED, false)
         val foregroundPackage = ForegroundAppDetector.foregroundPackageFromEvent(event)
         if (foregroundPackage == null || foregroundPackage.isBlank()) {
             Log.d("GENET", "Skipping block because package is null/blank")
@@ -239,11 +271,11 @@ class GenetAccessibilityService : AccessibilityService() {
         Log.d("GENET", "Foreground package: $foregroundPackage")
         val genetPackage = applicationContext.packageName
         if (consumeForegroundGenetOverlay(foregroundPackage)) return
-        if (consumeForegroundPermissionControllerOverlay(foregroundPackage)) return
-        if (consumeSettingsWindowHomeOverlay(event, eventType, foregroundPackage, genetPackage)) return
-        if (consumeForegroundSettingsFamilyOverlay(foregroundPackage)) return
+        if (consumeForegroundPermissionControllerOverlay(foregroundPackage, permissionLockEnabled)) return
+        if (consumeSettingsWindowHomeOverlay(event, eventType, foregroundPackage, genetPackage, permissionLockEnabled)) return
+        if (consumeForegroundSettingsFamilyOverlay(foregroundPackage, permissionLockEnabled)) return
         if (consumeTemporarilyApprovedOverlay(prefs, foregroundPackage)) return
-        scheduleDebouncedBlockedHandling(prefs, foregroundPackage)
+        scheduleDebouncedBlockedHandling(prefs, foregroundPackage, event, permissionLockEnabled)
     }
 
     private fun getBlockedPackagesSet(prefs: android.content.SharedPreferences): Set<String> {
