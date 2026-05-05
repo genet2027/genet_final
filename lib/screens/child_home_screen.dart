@@ -853,6 +853,10 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
       childId: cid,
       state: state,
       protectionLost: lost,
+      previousReportedState: _lastVpnStatusReportState,
+      previousReportedProtectionLost: _lastVpnStatusReportState != null
+          ? vpnReportProtectionLost(_lastVpnStatusReportState!)
+          : null,
     );
     if (!mounted || !ok) return;
     _lastVpnStatusReportState = state;

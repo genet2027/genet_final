@@ -13,6 +13,7 @@ import '../models/installed_app.dart';
 import '../models/parent_message.dart';
 import '../services/installed_apps_categorization.dart';
 import 'children_repository.dart';
+import 'vpn_protection_alert_logic.dart';
 
 /// Parent ↔ child Firestore sync and local identity helpers.
 ///
@@ -82,6 +83,10 @@ DocumentReference<Map<String, dynamic>> _childDocRef(String parentId, String chi
   return FirebaseFirestore.instance.doc('${_parentChildrenPath(parentId)}/$childId');
 }
 
+CollectionReference<Map<String, dynamic>> _childAlertsCollectionRef(String parentId, String childId) {
+  return _childDocRef(parentId, childId).collection(_kAlertsSubcollection);
+}
+
 // --- Field names ---
 const String _kProfile = 'profile';
 const String _kConnectionStatus = 'connectionStatus';
@@ -101,6 +106,9 @@ const String _kDisconnected = 'disconnected';
 const String _kRemoved = 'removed'; // legacy, treat same as disconnected
 const String _kConnectedAt = 'connectedAt';
 const String _kDisconnectedAt = 'disconnectedAt';
+
+const String _kAlertsSubcollection = 'alerts';
+const String _kVpnAlertTypeProtectionLost = 'vpn_protection_lost';
 
 const String _kFirstName = 'firstName';
 const String _kLastName = 'lastName';
@@ -981,6 +989,8 @@ Future<bool> reportChildVpnStatus({
   required String childId,
   required String state,
   required bool protectionLost,
+  String? previousReportedState,
+  bool? previousReportedProtectionLost,
 }) async {
   if (parentId.isEmpty || childId.isEmpty) return false;
   final path = _childDocRef(parentId, childId).path;
@@ -998,11 +1008,86 @@ Future<bool> reportChildVpnStatus({
       '[GenetVpn] reportChildVpnStatus path=$path state=$state protectionLost=$protectionLost',
     );
     await _childDocRef(parentId, childId).set(payload, SetOptions(merge: true));
-    return true;
   } catch (e, st) {
     debugPrint('[GenetVpn] reportChildVpnStatus FAILED path=$path error=$e $st');
     return false;
   }
+  await maybeCreateVpnAlert(
+    previousState: previousReportedState,
+    previousProtectionLost: previousReportedProtectionLost,
+    nextState: state,
+    nextProtectionLost: protectionLost,
+    parentId: parentId,
+    childId: childId,
+  );
+  return true;
+}
+
+/// Child device: create or resolve `vpn_protection_lost` alerts from [vpnStatus] transitions.
+/// Safe to call after a successful [reportChildVpnStatus] write; failures are swallowed.
+Future<void> maybeCreateVpnAlert({
+  required String? previousState,
+  required bool? previousProtectionLost,
+  required String nextState,
+  required bool nextProtectionLost,
+  required String parentId,
+  required String childId,
+}) async {
+  if (parentId.isEmpty || childId.isEmpty) return;
+  final decision = evaluateVpnProtectionAlertTransition(
+    previousState: previousState,
+    previousProtectionLost: previousProtectionLost,
+    nextState: nextState,
+    nextProtectionLost: nextProtectionLost,
+  );
+  try {
+    if (decision.shouldCreate && decision.createdAlertState != null) {
+      await _childAlertsCollectionRef(parentId, childId).add(<String, dynamic>{
+        'type': _kVpnAlertTypeProtectionLost,
+        'createdAt': FieldValue.serverTimestamp(),
+        'state': decision.createdAlertState,
+        'resolved': false,
+        'source': 'child',
+        'lastKnownState': 'active',
+      });
+      debugPrint('[GenetVpn] vpn_protection_lost alert created state=${decision.createdAlertState}');
+    }
+    if (decision.shouldResolve) {
+      await _resolveLatestUnresolvedVpnProtectionLost(parentId, childId);
+    }
+  } catch (e, st) {
+    debugPrint('[GenetVpn] maybeCreateVpnAlert FAILED error=$e $st');
+  }
+}
+
+Future<void> _resolveLatestUnresolvedVpnProtectionLost(String parentId, String childId) async {
+  final qs = await _childAlertsCollectionRef(parentId, childId)
+      .orderBy('createdAt', descending: true)
+      .limit(8)
+      .get();
+  for (final d in qs.docs) {
+    final m = d.data();
+    if (m['type'] == _kVpnAlertTypeProtectionLost && m['resolved'] != true) {
+      await d.reference.update(<String, dynamic>{'resolved': true});
+      debugPrint('[GenetVpn] vpn_protection_lost alert resolved id=${d.id}');
+      return;
+    }
+  }
+}
+
+/// Parent: whether latest snapshot shows an unresolved [vpn_protection_lost] alert (≤3 newest docs).
+Stream<bool> watchHasUnresolvedVpnProtectionLostAlert(String parentId, String childId) {
+  if (parentId.isEmpty || childId.isEmpty) return Stream<bool>.value(false);
+  return _childAlertsCollectionRef(parentId, childId)
+      .orderBy('createdAt', descending: true)
+      .limit(3)
+      .snapshots()
+      .map((snap) {
+    return snap.docs.any((d) {
+      final m = d.data();
+      return m['type'] == _kVpnAlertTypeProtectionLost && m['resolved'] != true;
+    });
+  });
 }
 
 // =============================================================================

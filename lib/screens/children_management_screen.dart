@@ -343,15 +343,24 @@ class _ChildFirestoreVpnHealth extends StatefulWidget {
 
 class _ChildFirestoreVpnHealthState extends State<_ChildFirestoreVpnHealth> {
   StreamSubscription<Map<String, dynamic>?>? _sub;
+  StreamSubscription<bool>? _alertSub;
   ChildVpnHealthParsed _health = parseChildVpnHealth(
     vpnStatusRaw: null,
     now: DateTime.now(),
   );
   String? _applyStatus;
+  bool _hasUnresolvedVpnLost = false;
 
   @override
   void initState() {
     super.initState();
+    _alertSub = watchHasUnresolvedVpnProtectionLostAlert(
+      widget.parentId,
+      widget.childId,
+    ).listen((v) {
+      if (!mounted) return;
+      setState(() => _hasUnresolvedVpnLost = v);
+    });
     _sub =
         watchParentChildDocStream(widget.parentId, widget.childId).listen((data) {
       if (!mounted) return;
@@ -370,16 +379,35 @@ class _ChildFirestoreVpnHealthState extends State<_ChildFirestoreVpnHealth> {
 
   @override
   void dispose() {
+    _alertSub?.cancel();
     _sub?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return ParentVpnHealthIndicator(
-      compact: true,
-      health: _health,
-      applyStatusLabel: _applyStatus,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ParentVpnHealthIndicator(
+          compact: true,
+          health: _health,
+          applyStatusLabel: _applyStatus,
+        ),
+        if (_hasUnresolvedVpnLost)
+          Padding(
+            padding: const EdgeInsets.only(top: 4, right: 2),
+            child: Text(
+              '⚠ VPN protection lost recently',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: Colors.deepOrange.shade900,
+              ),
+              textDirection: TextDirection.rtl,
+            ),
+          ),
+      ],
     );
   }
 }
