@@ -91,6 +91,8 @@ const String _kExtensionRequests = 'extensionRequests';
 const String _kUpdatedAt = 'updatedAt';
 const String _kVpnEnabled = 'vpnEnabled';
 const String _kVpnStatus = 'vpnStatus';
+/// Apply outcome from [VpnRemoteChildPolicy] / [syncChildVpnStatusToFirebase]: on | off | error
+const String _kVpnApplyStatus = 'vpnApplyStatus';
 const String _kVpnStatusMessage = 'vpnStatusMessage';
 const String _kLinkCode = 'linkCode';
 const String _kParentId = 'parentId';
@@ -945,7 +947,8 @@ Future<ParentMessage> addParentMessageToFirebase(
 // =============================================================================
 // === Child device: VPN status reported to parent child doc ===
 // =============================================================================
-/// Child device: report VPN outcome to the same child doc (parent reads [vpnStatus]).
+/// Child device: report VPN apply outcome (on|off|error) — field [_kVpnApplyStatus].
+/// Parent-alert map lives under [_kVpnStatus] via [reportChildVpnStatus].
 Future<void> syncChildVpnStatusToFirebase(
   String parentId,
   String childId,
@@ -954,7 +957,7 @@ Future<void> syncChildVpnStatusToFirebase(
 }) async {
   final path = _childDocRef(parentId, childId).path;
   final m = <String, dynamic>{
-    _kVpnStatus: vpnStatus,
+    _kVpnApplyStatus: vpnStatus,
     _kUpdatedAt: FieldValue.serverTimestamp(),
   };
   if (vpnStatusMessage != null) {
@@ -963,10 +966,42 @@ Future<void> syncChildVpnStatusToFirebase(
     m[_kVpnStatusMessage] = FieldValue.delete();
   }
   try {
-    debugPrint('[GenetVpn] child writing path=$path vpnStatus=$vpnStatus msg=$vpnStatusMessage');
+    debugPrint('[GenetVpn] child writing path=$path vpnApplyStatus=$vpnStatus msg=$vpnStatusMessage');
     await _childDocRef(parentId, childId).set(m, SetOptions(merge: true));
   } catch (e, st) {
     debugPrint('[GenetVpn] syncChildVpnStatusToFirebase FAILED path=$path error=$e $st');
+  }
+}
+
+/// Child device: compact VPN transport snapshot for parent dashboard (block 1).
+/// Writes merge map at `vpnStatus` — does not start/stop VPN.
+/// Returns false when Firestore write fails or ids invalid.
+Future<bool> reportChildVpnStatus({
+  required String parentId,
+  required String childId,
+  required String state,
+  required bool protectionLost,
+}) async {
+  if (parentId.isEmpty || childId.isEmpty) return false;
+  final path = _childDocRef(parentId, childId).path;
+  final payload = <String, dynamic>{
+    _kVpnStatus: <String, dynamic>{
+      'state': state,
+      'protectionLost': protectionLost,
+      'lastCheckedAt': FieldValue.serverTimestamp(),
+      'updatedBy': 'child',
+    },
+    _kUpdatedAt: FieldValue.serverTimestamp(),
+  };
+  try {
+    debugPrint(
+      '[GenetVpn] reportChildVpnStatus path=$path state=$state protectionLost=$protectionLost',
+    );
+    await _childDocRef(parentId, childId).set(payload, SetOptions(merge: true));
+    return true;
+  } catch (e, st) {
+    debugPrint('[GenetVpn] reportChildVpnStatus FAILED path=$path error=$e $st');
+    return false;
   }
 }
 
@@ -1059,7 +1094,7 @@ class SyncedChildData {
   final String? connectionStatus;
   final String? parentId;
   final bool vpnEnabled;
-  /// Last status written by child device: on | off | error
+  /// Last apply ping from child device (on | off | error). Prefer Firestore [vpnApplyStatus], legacy string [vpnStatus].
   final String? vpnStatus;
 }
 
@@ -1070,7 +1105,10 @@ SyncedChildData _mapSyncedChildData(Map<String, dynamic> data) {
   final status = data[_kConnectionStatus] as String?;
   final parentId = data[_kParentId] as String?;
   final vpnEnabled = data[_kVpnEnabled] == true;
-  final vpnStatus = data[_kVpnStatus] as String?;
+  final vpnApply = data[_kVpnApplyStatus] as String?;
+  final vpnRaw = data[_kVpnStatus];
+  final vpnStatus =
+      vpnApply ?? (vpnRaw is String ? vpnRaw : null);
   developer.log(
     'Child data loaded: blocked=${blocked.length} approved=${approved.length} requests=${requests.length} vpnEnabled=$vpnEnabled vpnStatus=$vpnStatus',
     name: 'Sync',

@@ -18,6 +18,7 @@ import '../l10n/app_localizations.dart';
 import '../models/child_model.dart';
 import '../models/parent_message.dart';
 import '../repositories/children_repository.dart';
+import '../repositories/child_vpn_status_report.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../repositories/parent_profile_repository.dart';
 import '../models/installed_app.dart';
@@ -188,6 +189,10 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
   bool _installedAppsSyncQueued = false;
   bool _installedAppsEmptyRetryUsed = false;
   bool _installedAppsIdentityRetryUsed = false;
+
+  /// Dedupe for [reportChildVpnStatus] (Firestore parent-alert map).
+  String? _lastVpnStatusReportState;
+  DateTime? _lastVpnStatusReportAt;
 
   /// Remote VPN policy snapshot (child device only).
   SyncedChildData? _lastSyncedForVpn;
@@ -815,9 +820,43 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
         protectionLost: protectionLost,
         requireVpn: requireVpn,
       );
+      unawaited(_maybeReportChildVpnFirestore(protectionStatus));
     } catch (_) {
       debugPrint('GENET_VPN: VPN CHECK FAILED');
+      unawaited(_maybeReportChildVpnFirestore(null));
     }
+  }
+
+  /// Writes `vpnStatus` parent-alert map when linked + connected; deduped.
+  Future<void> _maybeReportChildVpnFirestore(String? protectionStatus) async {
+    if (!mounted || !Platform.isAndroid) return;
+    if (_firebaseConnectionStatus != true) return;
+    final role = await getUserRole();
+    if (!mounted || role != kUserRoleChild) return;
+    final pid = normalizeIdentifier(await getLinkedParentId());
+    final cid = normalizeIdentifier(await getLinkedChildId());
+    if (pid == null || cid == null) return;
+
+    final state = mapProtectionStatusToVpnReportState(protectionStatus);
+    final lost = vpnReportProtectionLost(state);
+    final now = DateTime.now();
+    if (!shouldReportChildVpnStatus(
+      nextState: state,
+      lastReportedState: _lastVpnStatusReportState,
+      now: now,
+      lastReportedAt: _lastVpnStatusReportAt,
+    )) {
+      return;
+    }
+    final ok = await reportChildVpnStatus(
+      parentId: pid,
+      childId: cid,
+      state: state,
+      protectionLost: lost,
+    );
+    if (!mounted || !ok) return;
+    _lastVpnStatusReportState = state;
+    _lastVpnStatusReportAt = now;
   }
 
   void _tickExtensionVpnWindows() {
@@ -1027,6 +1066,8 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
       _vpnRunningOnDevice = null;
       _vpnProtectionLostTrigger = false;
       _vpnIndicatorStatus = 'off';
+      _lastVpnStatusReportState = null;
+      _lastVpnStatusReportAt = null;
     });
   }
 

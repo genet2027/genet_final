@@ -36,7 +36,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   StreamSubscription<Map<String, dynamic>?>? _parentVpnDocSub;
   StreamSubscription<String?>? _selectedChildIdSub;
   String? _boundSelectedChildId;
-  /// Last [vpnStatus] from child doc (on|off|error); parent device does not use local VPN for this.
+  /// Last apply outcome from child doc ([vpnApplyStatus], legacy string [vpnStatus]); parent device does not use local VPN for this.
   String? _parentRemoteVpnStatus;
 
   Future<String?> _resolveSelectedChildId() async {
@@ -69,7 +69,9 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     debugPrint('[GenetDebug] READ PATH: genet_parents/$pid/children/$cid');
     _parentVpnDocSub = watchParentChildDocStream(pid, cid).listen((data) {
       if (!mounted) return;
-      final raw = data?['vpnStatus'] as String?;
+      final vpnStatusField = data?['vpnStatus'];
+      final raw = data?['vpnApplyStatus'] as String? ??
+          (vpnStatusField is String ? vpnStatusField : null);
       setState(() => _parentRemoteVpnStatus = raw ?? 'off');
     });
   }
