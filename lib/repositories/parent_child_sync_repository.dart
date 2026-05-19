@@ -706,6 +706,30 @@ Future<SavedChildLinkPreflightResult> preflightSavedChildCanonicalLink({
   }
 }
 
+/// Routing gate: true only when saved link prefs exist and the canonical child doc is active.
+Future<bool> hasVerifiedChildCanonicalConnection() async {
+  final p = normalizeIdentifier(await getLinkedParentId());
+  final c = normalizeIdentifier(await getLinkedChildId());
+  if (p == null || c == null) {
+    debugPrint('[GENET][ROUTING] child_no_link_prefs');
+    return false;
+  }
+  try {
+    final outcome = await fetchCanonicalChildDocState(parentId: p, childId: c);
+    if (outcome == CanonicalChildDocFetchOutcome.presentActive) {
+      return true;
+    }
+    if (outcome == CanonicalChildDocFetchOutcome.networkFailure) {
+      debugPrint('[GENET][ROUTING] child_canonical_check_error');
+    }
+    return false;
+  } catch (e, st) {
+    debugPrint('[GENET][ROUTING] child_canonical_check_error');
+    developer.log('hasVerifiedChildCanonicalConnection: $e $st', name: 'Sync');
+    return false;
+  }
+}
+
 /// Whether raw canonical child document map indicates an active link for [expectedParentId].
 bool canonicalChildDataActiveForParent(
   Map<String, dynamic> data,

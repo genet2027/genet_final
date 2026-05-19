@@ -3,13 +3,11 @@ import 'package:flutter/material.dart';
 import '../core/config/genet_config.dart';
 import '../core/user_role.dart';
 import '../l10n/app_localizations.dart';
-import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
 import '../widgets/language_switcher.dart';
 import 'child_home_screen.dart';
 import 'child_link_screen.dart';
-import 'child_self_identify_screen.dart';
 import 'pin_login_screen.dart';
 
 /// מסך בחירת תפקיד: הורה או ילד. כניסה ראשית לאפליקציה.
@@ -28,59 +26,28 @@ class _RoleSelectScreenState extends State<RoleSelectScreen> {
     setState(() => _childRouteBusy = true);
     try {
       await GenetConfig.commitUserRole(kUserRoleChild);
-      final linkedId = await getLinkedChildId();
       if (!mounted || !context.mounted) return;
 
-      if (linkedId != null && linkedId.isNotEmpty) {
-        final preflight = await preflightSavedChildCanonicalLink();
-        if (!mounted || !context.mounted) return;
-        switch (preflight) {
-          case SavedChildLinkPreflightResult.verifiedConnected:
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (context) => const ChildHomeScreen(),
-              ),
-            );
-            return;
-          case SavedChildLinkPreflightResult.verifiedInvalidOrStale:
-            await clearChildLinkedPrefsKeepLocalIdentity();
-            GenetConfig.syncToNative();
-            if (!mounted || !context.mounted) return;
-            final hasProfile = await hasChildSelfProfile();
-            if (!mounted || !context.mounted) return;
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (context) => hasProfile
-                    ? const ChildLinkScreen()
-                    : const ChildSelfIdentifyScreen(),
-              ),
-            );
-            return;
-          case SavedChildLinkPreflightResult.unverifiedTransient:
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (context) => const ChildHomeScreen(
-                  canonicalStartupPreflightUnverified: true,
-                ),
-              ),
-            );
-            return;
-        }
+      final verified = await hasVerifiedChildCanonicalConnection();
+      if (!mounted || !context.mounted) return;
+
+      if (verified) {
+        debugPrint('[GENET][ROUTING] child_verified_to_home');
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const ChildHomeScreen(),
+          ),
+        );
+      } else {
+        debugPrint('[GENET][ROUTING] child_unverified_to_link');
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const ChildLinkScreen(),
+          ),
+        );
       }
-
-      final hasProfile = await hasChildSelfProfile();
-      if (!mounted || !context.mounted) return;
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (context) => hasProfile
-              ? const ChildHomeScreen()
-              : const ChildSelfIdentifyScreen(),
-        ),
-      );
     } finally {
       if (mounted) setState(() => _childRouteBusy = false);
     }

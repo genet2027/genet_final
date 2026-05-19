@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../repositories/children_repository.dart';
+import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
 import '../widgets/natural_text_field.dart';
 import 'child_home_screen.dart';
+import 'child_link_screen.dart';
 
 /// Step 1: Child enters first name, last name, age, school code. Saved locally and used when linking to parent.
 class ChildSelfIdentifyScreen extends StatefulWidget {
@@ -47,9 +49,13 @@ class _ChildSelfIdentifyScreenState extends State<ChildSelfIdentifyScreen> {
       schoolCode: schoolCode,
     );
     if (!mounted) return;
+    final verified = await hasVerifiedChildCanonicalConnection();
+    if (!mounted) return;
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (_) => const ChildHomeScreen()),
+      MaterialPageRoute(
+        builder: (_) => verified ? const ChildHomeScreen() : const ChildLinkScreen(),
+      ),
     );
   }
 
