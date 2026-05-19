@@ -4,7 +4,16 @@ import 'package:flutter/foundation.dart';
 
 import '../firebase_options.dart';
 
-/// Initializes Firebase once and ensures a signed-in user (anonymous if needed).
+/// True when [FirebaseAuth.instance.currentUser] is a non-anonymous signed-in user.
+bool get hasAuthenticatedFirebaseUser {
+  final user = FirebaseAuth.instance.currentUser;
+  return user != null && !user.isAnonymous;
+}
+
+/// Current Firebase user after [initializeAppBootstrap] (anonymous fallback or restored session).
+User? currentBootstrapUser() => FirebaseAuth.instance.currentUser;
+
+/// Initializes Firebase once and ensures a signed-in user (anonymous fallback only when needed).
 /// Call from [main] after [WidgetsFlutterBinding.ensureInitialized], before [runApp].
 Future<void> initializeAppBootstrap() async {
   debugPrint('[GENET][BOOTSTRAP] start');
@@ -17,8 +26,12 @@ Future<void> initializeAppBootstrap() async {
     debugPrint('[GENET][BOOTSTRAP] firebase_initialized');
 
     User? user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      debugPrint('[GENET][BOOTSTRAP] signing_in_anonymously');
+    if (user != null && !user.isAnonymous) {
+      debugPrint('[GENET][BOOTSTRAP] authenticated_user_restored');
+    } else if (user != null && user.isAnonymous) {
+      debugPrint('[GENET][BOOTSTRAP] existing_anonymous_user');
+    } else {
+      debugPrint('[GENET][BOOTSTRAP] creating_fallback_anonymous_user');
       final credential = await FirebaseAuth.instance.signInAnonymously();
       user = credential.user;
     }
