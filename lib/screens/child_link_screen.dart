@@ -202,6 +202,7 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
       await setChildLinkStatusLinked(childId);
       GenetConfig.syncToNative();
       if (!mounted) return;
+      debugPrint('[GENET][ONBOARDING] child_pairing_completed');
       developer.log('Manual code connection: navigating to child home (parent screen will update via Firebase)', name: 'Sync');
       Navigator.pushReplacement(
         context,

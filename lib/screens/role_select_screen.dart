@@ -6,8 +6,8 @@ import '../l10n/app_localizations.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../theme/app_theme.dart';
 import '../widgets/language_switcher.dart';
+import 'auth_screen.dart';
 import 'child_home_screen.dart';
-import 'child_link_screen.dart';
 import 'pin_login_screen.dart';
 
 /// מסך בחירת תפקיד: הורה או ילד. כניסה ראשית לאפליקציה.
@@ -32,7 +32,7 @@ class _RoleSelectScreenState extends State<RoleSelectScreen> {
       if (!mounted || !context.mounted) return;
 
       if (verified) {
-        debugPrint('[GENET][ROUTING] child_verified_to_home');
+        debugPrint('[GENET][ONBOARDING] child_verified_to_home');
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
@@ -40,11 +40,11 @@ class _RoleSelectScreenState extends State<RoleSelectScreen> {
           ),
         );
       } else {
-        debugPrint('[GENET][ROUTING] child_unverified_to_link');
+        debugPrint('[GENET][ONBOARDING] child_start_onboarding');
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (context) => const ChildLinkScreen(),
+            builder: (context) => const AuthScreen(role: kUserRoleChild),
           ),
         );
       }

@@ -2,7 +2,11 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../core/config/genet_config.dart';
+import '../core/user_role.dart';
+import '../repositories/children_repository.dart';
 import '../theme/app_theme.dart';
+import 'child_link_screen.dart';
+import 'child_self_identify_screen.dart';
 
 /// Basic email/password Firebase auth for parent or child before pairing.
 class AuthScreen extends StatefulWidget {
@@ -71,9 +75,22 @@ class _AuthScreenState extends State<AuthScreen> {
     if (!mounted) return;
     if (widget.onAuthenticated != null) {
       widget.onAuthenticated!();
-    } else {
-      Navigator.pop(context, true);
+      return;
     }
+    if (widget.role == kUserRoleChild && !Navigator.of(context).canPop()) {
+      final hasProfile = await hasChildSelfProfile();
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => hasProfile
+              ? const ChildLinkScreen()
+              : const ChildSelfIdentifyScreen(),
+        ),
+      );
+      return;
+    }
+    Navigator.pop(context, true);
   }
 
   Future<void> _signIn() async {
@@ -91,8 +108,10 @@ class _AuthScreenState extends State<AuthScreen> {
       );
       await _completeAuthSuccess();
     } on FirebaseAuthException catch (e) {
-      _showError(_hebrewAuthError(e));
-    } catch (_) {
+      debugPrint('[GENET][AUTH][ERROR] sign_in code=${e.code} message=${e.message}');
+      _showError('${_hebrewAuthError(e)} (${e.code})');
+    } catch (e) {
+      debugPrint('[GENET][AUTH][ERROR] unexpected: $e');
       _showError('שגיאה בלתי צפויה. נסה שוב.');
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -114,8 +133,10 @@ class _AuthScreenState extends State<AuthScreen> {
       );
       await _completeAuthSuccess();
     } on FirebaseAuthException catch (e) {
-      _showError(_hebrewAuthError(e));
-    } catch (_) {
+      debugPrint('[GENET][AUTH][ERROR] register code=${e.code} message=${e.message}');
+      _showError('${_hebrewAuthError(e)} (${e.code})');
+    } catch (e) {
+      debugPrint('[GENET][AUTH][ERROR] unexpected: $e');
       _showError('שגיאה בלתי צפויה. נסה שוב.');
     } finally {
       if (mounted) setState(() => _loading = false);
