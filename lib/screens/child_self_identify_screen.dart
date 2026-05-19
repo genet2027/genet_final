@@ -46,6 +46,7 @@ class _ChildSelfIdentifyScreenState extends State<ChildSelfIdentifyScreen> {
       age: age,
       schoolCode: schoolCode,
     );
+    debugPrint('[GENET][PROFILE] child_profile_saved');
     if (!mounted) return;
     debugPrint('[GENET][ONBOARDING] child_profile_completed');
     Navigator.pushReplacement(
@@ -60,7 +61,7 @@ class _ChildSelfIdentifyScreenState extends State<ChildSelfIdentifyScreen> {
       textDirection: TextDirection.rtl,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('הזדהות'),
+          title: const Text('פרטי ילד'),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
             onPressed: () => Navigator.pop(context),
@@ -72,21 +73,25 @@ class _ChildSelfIdentifyScreenState extends State<ChildSelfIdentifyScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Text(
-                'הזן את הפרטים שלך',
+                'פרטי ילד',
                 style: TextStyle(
                   fontWeight: FontWeight.w600,
-                  fontSize: 18,
+                  fontSize: 22,
+                  color: AppTheme.darkBlue,
                 ),
+                textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               Text(
-                'הפרטים יישמרו במכשיר ויועברו להורה אחרי החיבור.',
+                'כדי להמשיך, מלא את פרטי הילד. הפרטים יעזרו להורה לזהות את המכשיר.',
                 style: TextStyle(
-                  fontSize: 14,
+                  fontSize: 15,
+                  height: 1.45,
                   color: Colors.grey.shade700,
                 ),
+                textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 32),
               NaturalTextField(
                 controller: _firstNameController,
                 decoration: const InputDecoration(
@@ -119,10 +124,20 @@ class _ChildSelfIdentifyScreenState extends State<ChildSelfIdentifyScreen> {
               NaturalTextField(
                 controller: _schoolCodeController,
                 decoration: const InputDecoration(
-                  labelText: 'קוד בית ספר',
+                  labelText: 'קוד בית ספר (אופציונלי)',
                   border: OutlineInputBorder(),
                 ),
                 textInputAction: TextInputAction.done,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'הפרטים נשמרים ומשמשים לזיהוי הילד בחיבור להורה.',
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1.4,
+                  color: Colors.grey.shade600,
+                ),
+                textAlign: TextAlign.center,
               ),
               if (_error != null) ...[
                 const SizedBox(height: 12),
@@ -138,7 +153,7 @@ class _ChildSelfIdentifyScreenState extends State<ChildSelfIdentifyScreen> {
                   backgroundColor: AppTheme.primaryBlue,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
-                child: const Text('המשך לחיבור להורה'),
+                child: const Text('שמור והמשך לחיבור הורה'),
               ),
             ],
           ),

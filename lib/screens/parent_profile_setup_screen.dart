@@ -68,13 +68,16 @@ class _ParentProfileSetupScreenState extends State<ParentProfileSetupScreen> {
         firstName: _firstNameController.text,
         lastName: _lastNameController.text,
       );
+      debugPrint('[GENET][PROFILE] parent_profile_saved');
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute<void>(
           builder: (_) => widget.completedBuilder(context),
         ),
       );
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('[GENET][PARENT_PROFILE][ERROR] save_failed: $e');
+      debugPrint('[GENET][PARENT_PROFILE][ERROR] stack: $st');
       if (mounted) {
         setState(() {
           _saveError = 'לא ניתן לשמור את הפרטים. נסה שוב.';
@@ -104,15 +107,26 @@ class _ParentProfileSetupScreenState extends State<ParentProfileSetupScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  'כדי להמשיך, מלאו שם פרטי ושם משפחה',
+                const Text(
+                  'פרטי הורה',
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.darkBlue,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'כדי להמשיך, מלא את הפרטים שלך. הפרטים יוצגו לילד לאחר החיבור.',
+                  style: TextStyle(
+                    fontSize: 15,
+                    height: 1.45,
                     color: Colors.grey.shade800,
                   ),
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 28),
+                const SizedBox(height: 32),
                 NaturalTextField(
                   controller: _firstNameController,
                   textInputAction: TextInputAction.next,
@@ -130,6 +144,16 @@ class _ParentProfileSetupScreenState extends State<ParentProfileSetupScreen> {
                     labelText: 'שם משפחה',
                     border: OutlineInputBorder(),
                   ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'השם יוצג לילד כדי לוודא שהוא מחובר להורה הנכון.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.4,
+                    color: Colors.grey.shade600,
+                  ),
+                  textAlign: TextAlign.center,
                 ),
                 if (_validationMessage != null) ...[
                   const SizedBox(height: 12),
@@ -169,7 +193,7 @@ class _ParentProfileSetupScreenState extends State<ParentProfileSetupScreen> {
                             color: Colors.white,
                           ),
                         )
-                      : const Text('המשך'),
+                      : const Text('שמור והמשך'),
                 ),
               ],
             ),
