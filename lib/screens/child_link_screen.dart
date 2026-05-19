@@ -10,6 +10,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../debug_firebase_state.dart';
 import '../core/config/genet_config.dart';
+import '../core/firebase_auth_guard.dart';
 import '../repositories/child_link_status_repository.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
@@ -51,6 +52,22 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
 
   Future<void> _connectWithCode(String code) async {
     developer.log('Manual code connection: entered code=$code', name: 'Sync');
+    try {
+      requireFirebaseUser();
+    } catch (_) {
+      debugPrint('[GENET][PAIRING] child_requires_authenticated_user');
+      setState(() => _error = kDebugMode
+          ? 'child_requires_authenticated_user'
+          : 'יש להתחבר עם חשבון ילד לפני החיבור להורה.');
+      return;
+    }
+    if (!firebaseUserIsAuthenticated()) {
+      debugPrint('[GENET][PAIRING] child_requires_authenticated_user');
+      setState(() => _error = kDebugMode
+          ? 'child_requires_authenticated_user'
+          : 'יש להתחבר עם חשבון ילד לפני החיבור להורה.');
+      return;
+    }
     if (code.length != 4 || int.tryParse(code) == null) {
       setState(() => _error = 'יש להזין קוד בן 4 ספרות');
       return;
@@ -68,8 +85,14 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
     final lastName = profile[kChildSelfProfileLastName] as String? ?? '';
     final age = (profile[kChildSelfProfileAge] as num?)?.toInt() ?? 0;
     final schoolCode = profile[kChildSelfProfileSchoolCode] as String? ?? '';
-    final existingId = await getLocalChildId();
-    final childId = existingId ?? generateChildId();
+    final childId = await getLocalChildId();
+    if (childId == null || childId.isEmpty) {
+      debugPrint('[GENET][PAIRING] child_requires_authenticated_user');
+      setState(() => _error = kDebugMode
+          ? 'child_requires_authenticated_user (missing auth-bound childId)'
+          : 'לא ניתן לזהות את מכשיר הילד. נסה שוב.');
+      return;
+    }
     final name = [firstName, lastName].join(' ').trim();
     String? attemptParentId;
     String? attemptChildId;
@@ -147,6 +170,7 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
         return;
       }
       if (!mounted) return;
+      debugPrint('[GENET][PAIRING] child_link_prefs_saved_after_canonical');
       await setLinkedParentId(parentId);
       await setLinkedChild(
         childId,

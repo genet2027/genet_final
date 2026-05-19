@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../debug_firebase_state.dart';
+import '../core/firebase_auth_guard.dart';
 import '../models/child_entity.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
@@ -47,6 +48,19 @@ class _AddChildByLinkScreenState extends State<AddChildByLinkScreen> {
       _parentId = null;
     });
     try {
+      requireFirebaseUser();
+      if (!firebaseUserIsAuthenticated()) {
+        debugPrint('[GENET][PAIRING] parent_requires_authenticated_user');
+        if (mounted) {
+          setState(() {
+            _creating = false;
+            _error = kDebugMode
+                ? 'parent_requires_authenticated_user'
+                : 'יש להתחבר עם חשבון הורה לפני יצירת קוד חיבור.';
+          });
+        }
+        return;
+      }
       final parentId = await getOrCreateParentId();
       final code = await createPendingLink(parentId: parentId);
       if (!mounted) return;
@@ -80,9 +94,8 @@ class _AddChildByLinkScreenState extends State<AddChildByLinkScreen> {
   }
 
   Future<void> _completeParentSideLink(ChildEntity child) async {
-    final parentId = _parentId;
     final code = _code;
-    if (parentId == null || code == null) {
+    if (code == null) {
       _linkInProgress = false;
       return;
     }
@@ -91,6 +104,7 @@ class _AddChildByLinkScreenState extends State<AddChildByLinkScreen> {
       connectionStatus: ChildConnectionStatus.connected,
     );
     try {
+      final parentId = await getOrCreateParentId();
       await addOrUpdateChild(entity);
       await setSelectedChildId(child.childId);
       await upsertParentChildDoc(
@@ -135,6 +149,7 @@ class _AddChildByLinkScreenState extends State<AddChildByLinkScreen> {
         _linkInProgress = false;
         return;
       }
+      debugPrint('[GENET][PAIRING] canonical_confirmed_parent_child');
       await setPendingLinkParentId(code, parentId);
       final blocked = await getBlockedPackagesForChild(child.childId);
       final approved = await getExtensionApprovedForChild(child.childId);

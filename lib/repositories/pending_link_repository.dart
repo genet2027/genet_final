@@ -130,6 +130,16 @@ Future<void> writeChildProfileToPendingLink(
   int age,
   String schoolCode,
 ) async {
+  requireFirebaseUser();
+  if (firebaseUserIsAuthenticated()) {
+    final authBoundChildId = 'c_${requireFirebaseUser().uid}';
+    if (childId.isEmpty || childId != authBoundChildId) {
+      throw StateError(
+        'Authenticated child pending link requires auth-bound childId=$authBoundChildId',
+      );
+    }
+    debugPrint('[GENET][PAIRING] child_pending_link_auth_bound_id');
+  }
   await _pendingLinkFirestoreWrite(
     () => FirebaseFirestore.instance.collection(_kCollection).doc(code).update({
       _kStatus: _kLinked,
