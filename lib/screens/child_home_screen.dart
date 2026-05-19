@@ -1337,8 +1337,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
         'SELECTED CHILD ID': selectedChildId,
       });
     }
-    await setLinkedChild(null, null);
-    await setLinkedParentId(null);
+    await clearChildLinkPrefsOnly();
     if (!mounted) return;
     _resetDisconnectedProtectionState();
     unawaited(_clearVpnProtectionLostInNative());

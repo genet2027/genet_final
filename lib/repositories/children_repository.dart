@@ -52,6 +52,10 @@ Future<String?> _authBoundLocalChildIdForChildDevice() async {
   return 'c_${requireFirebaseUser().uid}';
 }
 
+bool isLegacyRandomChildId(String id) {
+  return RegExp(r'^c_\d+_\d+$').hasMatch(id.trim());
+}
+
 /// Parent: list of children.
 Future<List<ChildEntity>> getChildren() async {
   final prefs = await SharedPreferences.getInstance();
@@ -126,11 +130,26 @@ Future<String?> getLocalChildId() async {
   final prefs = await SharedPreferences.getInstance();
   final authId = await _authBoundLocalChildIdForChildDevice();
   if (authId != null) {
+    final existing = prefs.getString(_kLocalChildIdKey);
+    if (existing == authId) {
+      debugPrint('[GENET][PERSISTENCE] auth_bound_identity_restored');
+    } else if (existing != null &&
+        existing.isNotEmpty &&
+        !isLegacyRandomChildId(existing)) {
+      debugPrint('[GENET][PERSISTENCE] skip_legacy_over_auth_child_id');
+    }
     await prefs.setString(_kLocalChildIdKey, authId);
     debugPrint('[GENET][IDENTITY] child_id_from_auth');
     return authId;
   }
-  return prefs.getString(_kLocalChildIdKey);
+  final existing = prefs.getString(_kLocalChildIdKey);
+  if (existing != null && existing.isNotEmpty) {
+    if (!isLegacyRandomChildId(existing)) {
+      debugPrint('[GENET][PERSISTENCE] auth_bound_identity_restored');
+    }
+    return existing;
+  }
+  return null;
 }
 
 Future<String?> getLinkedChildFirstName() async {

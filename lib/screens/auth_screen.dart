@@ -7,6 +7,8 @@ import '../repositories/children_repository.dart';
 import '../theme/app_theme.dart';
 import 'child_link_screen.dart';
 import 'child_self_identify_screen.dart';
+import 'parent_profile_setup_screen.dart';
+import 'parent_shell.dart';
 
 /// Basic email/password Firebase auth for parent or child before pairing.
 class AuthScreen extends StatefulWidget {
@@ -75,22 +77,42 @@ class _AuthScreenState extends State<AuthScreen> {
     if (!mounted) return;
     if (widget.onAuthenticated != null) {
       widget.onAuthenticated!();
+      Navigator.pop(context, true);
       return;
     }
-    if (widget.role == kUserRoleChild && !Navigator.of(context).canPop()) {
-      final hasProfile = await hasChildSelfProfile();
-      if (!mounted) return;
+    if (Navigator.of(context).canPop()) {
+      Navigator.pop(context, true);
+      return;
+    }
+    if (widget.role == kUserRoleParent) {
+      debugPrint('[GENET][AUTH_FLOW] parent_auth_to_profile');
       Navigator.pushReplacement(
         context,
         MaterialPageRoute<void>(
-          builder: (_) => hasProfile
-              ? const ChildLinkScreen()
-              : const ChildSelfIdentifyScreen(),
+          builder: (_) => ParentProfileSetupScreen(
+            completedBuilder: (_) => const ParentShell(),
+          ),
         ),
       );
       return;
     }
-    Navigator.pop(context, true);
+    if (widget.role == kUserRoleChild) {
+      final hasProfile = await hasChildSelfProfile();
+      if (!mounted) return;
+      if (hasProfile) {
+        debugPrint('[GENET][AUTH_FLOW] child_auth_to_link_existing_profile');
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute<void>(builder: (_) => const ChildLinkScreen()),
+        );
+      } else {
+        debugPrint('[GENET][AUTH_FLOW] child_auth_to_profile');
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute<void>(builder: (_) => const ChildSelfIdentifyScreen()),
+        );
+      }
+    }
   }
 
   Future<void> _signIn() async {

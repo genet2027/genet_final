@@ -134,10 +134,11 @@ class _ChildrenManagementScreenState extends State<ChildrenManagementScreen> {
     );
     if (confirm != true || !mounted) return;
     try {
-      await removeChild(child.childId);
       final parentId = await getOrCreateParentId();
       await setChildConnectionStatusFirebase(parentId, child.childId, 'disconnected');
+      await removeChild(child.childId);
       await setChildLinkStatusRemoved(child.childId);
+      debugPrint('[GENET][DISCONNECT] parent_disconnected_link_only');
       developer.log('Parent removed child: childId=${child.childId}', name: 'Sync');
     } catch (e) {
       developer.log('Parent remove child error: $e', name: 'Sync');

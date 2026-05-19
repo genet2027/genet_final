@@ -50,21 +50,27 @@ Future<void> saveParentProfile({
   }
 
   final ref = _parentDocRef(id);
-  final snap = await ref.get();
-  final payload = <String, dynamic>{
-    'firstName': fn,
-    'lastName': ln,
-    'displayName': displayName,
-    'updatedAt': FieldValue.serverTimestamp(),
-  };
+  try {
+    final snap = await ref.get();
+    final payload = <String, dynamic>{
+      'firstName': fn,
+      'lastName': ln,
+      'displayName': displayName,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
 
-  if (snap.exists) {
-    await ref.update(payload);
-  } else {
-    await ref.set({
-      ...payload,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
+    if (snap.exists) {
+      await ref.update(payload);
+    } else {
+      await ref.set({
+        ...payload,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    }
+  } catch (e) {
+    debugPrint('[GENET][PARENT_PROFILE_REPO][ERROR] saveParentProfile failed: $e');
+    debugPrint('[GENET][PARENT_PROFILE_REPO][ERROR] parentId=$id');
+    rethrow;
   }
 }
 

@@ -63,6 +63,14 @@ class _ParentProfileSetupScreenState extends State<ParentProfileSetupScreen> {
         });
         return;
       }
+      debugPrint('[GENET][PARENT_PROFILE] saving_with_parentId=$parentId');
+      if (!parentId.startsWith('p_')) {
+        debugPrint('[GENET][PARENT_PROFILE][ERROR] invalid_parent_id_for_profile');
+        setState(() {
+          _saveError = 'שגיאת זיהוי הורה. התחבר מחדש.';
+        });
+        return;
+      }
       await saveParentProfile(
         parentId: parentId,
         firstName: _firstNameController.text,

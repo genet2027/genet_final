@@ -2,12 +2,12 @@ import 'dart:async';
 import 'dart:developer' as developer;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/config/genet_config.dart';
 import '../core/extension_requests.dart';
-import '../core/firebase_auth_guard.dart';
 import '../core/user_role.dart';
 import '../models/child_entity.dart';
 import '../models/installed_app.dart';
@@ -36,11 +36,23 @@ import 'vpn_protection_alert_logic.dart';
 // --- Parent ID (parent device) ---
 const String _kParentIdKey = 'genet_parent_id';
 
+bool isLegacyRandomParentId(String id) {
+  return RegExp(r'^p_\d+_\d+$').hasMatch(id.trim());
+}
+
 Future<String> getOrCreateParentId() async {
   final prefs = await SharedPreferences.getInstance();
-  if (firebaseUserIsAuthenticated()) {
-    final id = 'p_${requireFirebaseUser().uid}';
+  final user = FirebaseAuth.instance.currentUser;
+  final stored = prefs.getString(_kParentIdKey);
+  debugPrint(
+    '[GENET][IDENTITY_FIX] getOrCreateParentId uid=${user?.uid} '
+    'isAnonymous=${user?.isAnonymous} stored=$stored',
+  );
+
+  if (user != null && !user.isAnonymous) {
+    final id = 'p_${user.uid}';
     await prefs.setString(_kParentIdKey, id);
+    debugPrint('[GENET][IDENTITY_FIX] forced_auth_parent_id');
     debugPrint('[GENET][IDENTITY] parent_id_from_auth');
     developer.log('Parent data loaded: parentId=$id (auth)', name: 'Sync');
     return id;
@@ -48,13 +60,16 @@ Future<String> getOrCreateParentId() async {
 
   debugPrint('[GENET][IDENTITY] parent_id_legacy_fallback');
   var id = prefs.getString(_kParentIdKey);
-  if (id == null || id.isEmpty) {
-    id = 'p_${DateTime.now().millisecondsSinceEpoch}_${DateTime.now().microsecond}';
-    await prefs.setString(_kParentIdKey, id);
-    developer.log('Parent data loaded: parentId created', name: 'Sync');
-  } else {
+  if (id != null && id.isNotEmpty) {
+    if (!isLegacyRandomParentId(id)) {
+      debugPrint('[GENET][PERSISTENCE] auth_bound_identity_restored');
+    }
     developer.log('Parent data loaded: parentId=$id', name: 'Sync');
+    return id;
   }
+  id = 'p_${DateTime.now().millisecondsSinceEpoch}_${DateTime.now().microsecond}';
+  await prefs.setString(_kParentIdKey, id);
+  developer.log('Parent data loaded: parentId created', name: 'Sync');
   return id;
 }
 
@@ -646,6 +661,12 @@ Future<void> clearChildLinkedPrefsKeepLocalIdentity() async {
   await setLinkedParentId(null);
 }
 
+/// Clears only parent-child link prefs (not local child identity or Firebase session).
+Future<void> clearChildLinkPrefsOnly() async {
+  debugPrint('[GENET][DISCONNECT] child_disconnected_link_only');
+  await clearChildLinkedPrefsKeepLocalIdentity();
+}
+
 /// Cold start (e.g. after [initializeAppBootstrap]): if role is child and saved link prefs
 /// reference a canonical doc that is **missing** or **not active** for that parent, clear link prefs.
 /// Network/timeout failures ([CanonicalChildDocFetchOutcome.networkFailure]) do not clear prefs.
@@ -659,6 +680,8 @@ Future<void> clearChildLinkedPrefsIfSavedCanonicalInactive() async {
     final outcome = await fetchCanonicalChildDocState(parentId: p, childId: c);
     switch (outcome) {
       case CanonicalChildDocFetchOutcome.presentActive:
+        debugPrint('[GENET][PERSISTENCE] keep_verified_child_link');
+        return;
       case CanonicalChildDocFetchOutcome.networkFailure:
         return;
       case CanonicalChildDocFetchOutcome.missing:
@@ -717,6 +740,7 @@ Future<bool> hasVerifiedChildCanonicalConnection() async {
   try {
     final outcome = await fetchCanonicalChildDocState(parentId: p, childId: c);
     if (outcome == CanonicalChildDocFetchOutcome.presentActive) {
+      debugPrint('[GENET][PERSISTENCE] keep_verified_child_link');
       return true;
     }
     if (outcome == CanonicalChildDocFetchOutcome.networkFailure) {
