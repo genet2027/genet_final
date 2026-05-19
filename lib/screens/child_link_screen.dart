@@ -11,11 +11,13 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../debug_firebase_state.dart';
 import '../core/config/genet_config.dart';
 import '../core/firebase_auth_guard.dart';
+import '../core/user_role.dart';
 import '../repositories/child_link_status_repository.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../repositories/pending_link_repository.dart';
 import '../services/relevant_installed_apps_engine.dart';
+import 'auth_screen.dart';
 import 'child_home_screen.dart';
 
 /// Child device: link to parent by scanning QR (payload = 4-digit code) or entering 4-digit manual code.
@@ -50,22 +52,31 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
     super.dispose();
   }
 
-  Future<void> _connectWithCode(String code) async {
-    developer.log('Manual code connection: entered code=$code', name: 'Sync');
+  Future<bool> _ensureAuthenticatedForPairing() async {
     try {
       requireFirebaseUser();
     } catch (_) {
-      debugPrint('[GENET][PAIRING] child_requires_authenticated_user');
-      setState(() => _error = kDebugMode
-          ? 'child_requires_authenticated_user'
-          : 'יש להתחבר עם חשבון ילד לפני החיבור להורה.');
-      return;
+      // Fall through to auth redirect.
     }
-    if (!firebaseUserIsAuthenticated()) {
-      debugPrint('[GENET][PAIRING] child_requires_authenticated_user');
-      setState(() => _error = kDebugMode
-          ? 'child_requires_authenticated_user'
-          : 'יש להתחבר עם חשבון ילד לפני החיבור להורה.');
+    if (firebaseUserIsAuthenticated()) return true;
+
+    debugPrint('[GENET][AUTH_GATE] child_redirect_to_auth');
+    if (!mounted) return false;
+    final authed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute<bool>(
+        builder: (_) => const AuthScreen(role: kUserRoleChild),
+      ),
+    );
+    return authed == true;
+  }
+
+  Future<void> _connectWithCode(String code) async {
+    developer.log('Manual code connection: entered code=$code', name: 'Sync');
+    if (!await _ensureAuthenticatedForPairing()) {
+      if (mounted) {
+        setState(() => _error = 'נדרשת התחברות ילד לפני החיבור להורה.');
+      }
       return;
     }
     if (code.length != 4 || int.tryParse(code) == null) {

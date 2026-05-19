@@ -7,11 +7,13 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../debug_firebase_state.dart';
 import '../core/firebase_auth_guard.dart';
+import '../core/user_role.dart';
 import '../models/child_entity.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../repositories/pending_link_repository.dart';
 import '../theme/app_theme.dart';
+import 'auth_screen.dart';
 
 /// Parent: create a pending link with 4-digit code, show QR and code, listen for child to connect.
 /// When child links, add child to list and show success.
@@ -48,18 +50,29 @@ class _AddChildByLinkScreenState extends State<AddChildByLinkScreen> {
       _parentId = null;
     });
     try {
-      requireFirebaseUser();
+      try {
+        requireFirebaseUser();
+      } catch (_) {
+        // Fall through to auth redirect.
+      }
       if (!firebaseUserIsAuthenticated()) {
-        debugPrint('[GENET][PAIRING] parent_requires_authenticated_user');
-        if (mounted) {
+        debugPrint('[GENET][AUTH_GATE] parent_redirect_to_auth');
+        if (!mounted) return;
+        final authed = await Navigator.push<bool>(
+          context,
+          MaterialPageRoute<bool>(
+            builder: (_) => const AuthScreen(role: kUserRoleParent),
+          ),
+        );
+        if (!mounted) return;
+        if (authed != true) {
           setState(() {
             _creating = false;
-            _error = kDebugMode
-                ? 'parent_requires_authenticated_user'
-                : 'יש להתחבר עם חשבון הורה לפני יצירת קוד חיבור.';
+            _error = 'נדרשת התחברות הורה ליצירת קוד חיבור.';
           });
+          return;
         }
-        return;
+        return _createLink();
       }
       final parentId = await getOrCreateParentId();
       final code = await createPendingLink(parentId: parentId);
