@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/config/genet_config.dart';
 import '../core/extension_requests.dart';
+import '../core/firebase_auth_guard.dart';
 import '../core/user_role.dart';
 import '../models/child_entity.dart';
 import '../models/installed_app.dart';
@@ -37,6 +38,15 @@ const String _kParentIdKey = 'genet_parent_id';
 
 Future<String> getOrCreateParentId() async {
   final prefs = await SharedPreferences.getInstance();
+  if (firebaseUserIsAuthenticated()) {
+    final id = 'p_${requireFirebaseUser().uid}';
+    await prefs.setString(_kParentIdKey, id);
+    debugPrint('[GENET][IDENTITY] parent_id_from_auth');
+    developer.log('Parent data loaded: parentId=$id (auth)', name: 'Sync');
+    return id;
+  }
+
+  debugPrint('[GENET][IDENTITY] parent_id_legacy_fallback');
   var id = prefs.getString(_kParentIdKey);
   if (id == null || id.isEmpty) {
     id = 'p_${DateTime.now().millisecondsSinceEpoch}_${DateTime.now().microsecond}';

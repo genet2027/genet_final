@@ -2,8 +2,11 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/firebase_auth_guard.dart';
+import '../core/user_role.dart';
 import '../models/child_entity.dart';
 import '../models/child_model.dart';
 
@@ -36,8 +39,17 @@ String generateLinkCode() {
 }
 
 /// Generates a unique child id (timestamp-based + random).
+/// For auth-bound child device identity, prefer [getLocalChildId] (returns `c_<firebaseUid>` when applicable).
 String generateChildId() {
+  debugPrint('[GENET][IDENTITY] child_id_legacy_fallback');
   return 'c_${DateTime.now().millisecondsSinceEpoch}_${_rng.nextInt(99999)}';
+}
+
+Future<String?> _authBoundLocalChildIdForChildDevice() async {
+  if (!firebaseUserIsAuthenticated()) return null;
+  final role = await getUserRole();
+  if (role != kUserRoleChild) return null;
+  return 'c_${requireFirebaseUser().uid}';
 }
 
 /// Parent: list of children.
@@ -112,6 +124,12 @@ Future<void> setLinkedChild(
 /// Child device: persistent child id for this profile (survives link removal so re-connect reuses same id).
 Future<String?> getLocalChildId() async {
   final prefs = await SharedPreferences.getInstance();
+  final authId = await _authBoundLocalChildIdForChildDevice();
+  if (authId != null) {
+    await prefs.setString(_kLocalChildIdKey, authId);
+    debugPrint('[GENET][IDENTITY] child_id_from_auth');
+    return authId;
+  }
   return prefs.getString(_kLocalChildIdKey);
 }
 
