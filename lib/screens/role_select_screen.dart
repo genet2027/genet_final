@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
 
 import '../core/config/genet_config.dart';
+import '../core/firebase_auth_guard.dart';
 import '../core/user_role.dart';
 import '../l10n/app_localizations.dart';
+import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
+import '../repositories/parent_profile_repository.dart';
 import '../theme/app_theme.dart';
 import '../widgets/language_switcher.dart';
 import 'auth_screen.dart';
 import 'child_home_screen.dart';
-import 'pin_login_screen.dart';
+import 'child_link_screen.dart';
+import 'child_self_identify_screen.dart';
+import 'parent_shell.dart';
 
 /// מסך בחירת תפקיד: הורה או ילד. כניסה ראשית לאפליקציה.
 class RoleSelectScreen extends StatefulWidget {
@@ -20,11 +25,51 @@ class RoleSelectScreen extends StatefulWidget {
 
 class _RoleSelectScreenState extends State<RoleSelectScreen> {
   bool _childRouteBusy = false;
+  bool _parentRouteBusy = false;
+
+  Future<void> _onParentRoleTap(BuildContext context) async {
+    if (_parentRouteBusy) return;
+    setState(() => _parentRouteBusy = true);
+    try {
+      debugPrint('[GENET][ONBOARDING_FLOW] selectedRole=parent');
+      await GenetConfig.commitUserRole(kUserRoleParent);
+      if (!mounted || !context.mounted) return;
+
+      if (firebaseUserIsAuthenticated()) {
+        final parentId = await getOrCreateParentId();
+        final profile = await getParentProfile(parentId);
+        if (!mounted || !context.mounted) return;
+        final hasCompletedProfile = isParentProfileComplete(profile);
+        debugPrint(
+          '[GENET][ONBOARDING_FLOW] hasCompletedProfile=$hasCompletedProfile',
+        );
+        if (hasCompletedProfile) {
+          debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ParentShell');
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const ParentShell()),
+          );
+          return;
+        }
+      }
+
+      debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=AuthScreen');
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const AuthScreen(role: kUserRoleParent),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _parentRouteBusy = false);
+    }
+  }
 
   Future<void> _onChildRoleTap(BuildContext context) async {
     if (_childRouteBusy) return;
     setState(() => _childRouteBusy = true);
     try {
+      debugPrint('[GENET][ONBOARDING_FLOW] selectedRole=child');
       await GenetConfig.commitUserRole(kUserRoleChild);
       if (!mounted || !context.mounted) return;
 
@@ -32,22 +77,51 @@ class _RoleSelectScreenState extends State<RoleSelectScreen> {
       if (!mounted || !context.mounted) return;
 
       if (verified) {
-        debugPrint('[GENET][ONBOARDING] child_verified_to_home');
+        debugPrint('[GENET][ONBOARDING_FLOW] hasCompletedProfile=true');
+        debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ChildHomeScreen');
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
             builder: (context) => const ChildHomeScreen(),
           ),
         );
-      } else {
-        debugPrint('[GENET][ONBOARDING] child_start_onboarding');
+        return;
+      }
+
+      if (firebaseUserIsAuthenticated()) {
+        final hasProfile = await hasChildSelfProfile();
+        if (!mounted || !context.mounted) return;
+        debugPrint(
+          '[GENET][ONBOARDING_FLOW] hasCompletedProfile=$hasProfile',
+        );
+        if (hasProfile) {
+          debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ChildLinkScreen');
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const ChildLinkScreen(),
+            ),
+          );
+          return;
+        }
+        debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ChildSelfIdentifyScreen');
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (context) => const AuthScreen(role: kUserRoleChild),
+            builder: (context) => const ChildSelfIdentifyScreen(),
           ),
         );
+        return;
       }
+
+      debugPrint('[GENET][ONBOARDING_FLOW] hasCompletedProfile=false');
+      debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=AuthScreen');
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const AuthScreen(role: kUserRoleChild),
+        ),
+      );
     } finally {
       if (mounted) setState(() => _childRouteBusy = false);
     }
@@ -87,22 +161,24 @@ class _RoleSelectScreenState extends State<RoleSelectScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: () async {
-                      await GenetConfig.commitUserRole(kUserRoleParent);
-                      if (!context.mounted) return;
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const PinLoginScreen(),
-                        ),
-                      );
-                    },
+                    onPressed: _parentRouteBusy
+                        ? null
+                        : () => _onParentRoleTap(context),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.white,
                       foregroundColor: AppTheme.primaryBlue,
                       padding: const EdgeInsets.symmetric(vertical: 18),
                     ),
-                    child: const Text('הורה'),
+                    child: _parentRouteBusy
+                        ? const SizedBox(
+                            height: 22,
+                            width: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppTheme.primaryBlue,
+                            ),
+                          )
+                        : const Text('הורה'),
                   ),
                 ),
                 const SizedBox(height: 16),

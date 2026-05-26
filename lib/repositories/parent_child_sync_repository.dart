@@ -78,6 +78,12 @@ Future<String?> getParentId() async {
   return prefs.getString(_kParentIdKey);
 }
 
+/// Local parent auth session only (logout). Does not touch Firestore or child data.
+Future<void> clearParentAuthSessionPrefs() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.remove(_kParentIdKey);
+}
+
 // =============================================================================
 // === Local identity: child device linked parent id ===
 // =============================================================================

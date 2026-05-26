@@ -74,9 +74,67 @@ Future<void> saveParentProfile({
   }
 }
 
-/// True only when [profile] is non-null and both names are non-empty after trim.
+/// True when [profile] is complete via registration flag or legacy name fields.
 bool isParentProfileComplete(ParentProfile? profile) {
   return profile != null && profile.isComplete;
+}
+
+/// Full registration profile at `genet_parents/{parentId}` (merge; does not touch subcollections).
+Future<void> saveRegistrationParentProfile({
+  required String parentId,
+  required String authUid,
+  required String firstName,
+  required String lastName,
+  required DateTime birthDate,
+  required int age,
+  required String phone,
+}) async {
+  final id = parentId.trim();
+  final fn = firstName.trim();
+  final ln = lastName.trim();
+  final fullName = '$fn $ln'.trim();
+  if (id.isEmpty || authUid.trim().isEmpty) return;
+
+  final testHook = debugSaveRegistrationParentProfileForTests;
+  if (testHook != null) {
+    await testHook(
+      parentId: id,
+      authUid: authUid,
+      firstName: fn,
+      lastName: ln,
+      birthDate: birthDate,
+      age: age,
+      phone: phone.trim(),
+    );
+    return;
+  }
+
+  final ref = _parentDocRef(id);
+  try {
+    final snap = await ref.get();
+    final payload = <String, dynamic>{
+      'firstName': fn,
+      'lastName': ln,
+      'fullName': fullName,
+      'displayName': fullName,
+      'birthDate': Timestamp.fromDate(birthDate),
+      'age': age,
+      'phone': phone.trim(),
+      'role': 'parent',
+      'authUid': authUid,
+      'parentId': id,
+      'profileCompleted': true,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+    if (!snap.exists) {
+      payload['createdAt'] = FieldValue.serverTimestamp();
+    }
+    await ref.set(payload, SetOptions(merge: true));
+  } catch (e) {
+    debugPrint('[GENET][PARENT_PROFILE_REPO][ERROR] saveRegistrationParentProfile failed: $e');
+    debugPrint('[GENET][PARENT_PROFILE_REPO][ERROR] parentId=$id');
+    rethrow;
+  }
 }
 
 /// Line to show after "מחובר להורה: " on the child home card (`null` ⇒ short label only).
@@ -114,3 +172,15 @@ Future<void> Function({
   required String lastName,
 })?
 debugSaveParentProfileForTests;
+
+@visibleForTesting
+Future<void> Function({
+  required String parentId,
+  required String authUid,
+  required String firstName,
+  required String lastName,
+  required DateTime birthDate,
+  required int age,
+  required String phone,
+})?
+debugSaveRegistrationParentProfileForTests;

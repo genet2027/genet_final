@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/config/genet_config.dart';
 import '../core/genet_vpn.dart';
+import '../core/parent_logout.dart';
 import '../core/vpn_remote_child.dart';
 import '../core/pin_storage.dart';
 import '../core/user_role.dart';
@@ -18,7 +19,7 @@ import '../widgets/parent_vpn_health_indicator.dart';
 import '../widgets/rounded_card.dart';
 import 'backup_support_screen.dart';
 import 'night_mode_settings_screen.dart';
-import 'pin_login_screen.dart';
+import 'role_select_screen.dart';
 
 /// Settings tab content: entries to Night Mode, VPN controls, Backup & Support, and Logout.
 class SettingsScreen extends StatefulWidget {
@@ -617,39 +618,54 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
           title: 'גיבוי ותמיכה',
           subtitle: 'ייצוא/ייבוא גיבוי, דיווח בעיה, צור קשר',
         ),
-        const SizedBox(height: 32),
-        RoundedCard(
-          onTap: () => _logout(context),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            child: Row(
-              children: [
-                Icon(Icons.logout_rounded,
-                    color: Colors.red.shade400, size: 28),
-                const SizedBox(width: 16),
-                Text(
-                  'יציאה',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 16,
-                    color: Colors.red.shade400,
+        if (_isParentRole == true) ...[
+          const SizedBox(height: 32),
+          RoundedCard(
+            onTap: () => _parentLogout(context),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              child: Row(
+                children: [
+                  Icon(Icons.logout_rounded,
+                      color: Colors.red.shade400, size: 28),
+                  const SizedBox(width: 16),
+                  Text(
+                    'התנתק',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 16,
+                      color: Colors.red.shade400,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
-        const SizedBox(height: 24),
+          const SizedBox(height: 24),
+        ],
       ],
     );
   }
 
-  void _logout(BuildContext context) {
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (_) => const PinLoginScreen()),
-      (route) => false,
-    );
+  Future<void> _parentLogout(BuildContext context) async {
+    if (_isParentRole != true) return;
+    debugPrint('[GENET][PARENT_LOGOUT] pressed');
+    try {
+      await performParentLogout();
+      if (!context.mounted) return;
+      debugPrint('[GENET][PARENT_LOGOUT] navigated_to_role_select');
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const RoleSelectScreen()),
+        (route) => false,
+      );
+    } catch (e) {
+      debugPrint('[GENET][PARENT_LOGOUT] error: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('לא ניתן להתנתק. נסה שוב.')),
+        );
+      }
+    }
   }
 }
 

@@ -44,6 +44,11 @@ Future<void> initializeAppBootstrap() async {
     debugPrint('[GENET][BOOTSTRAP] firebase_ready=true');
     debugPrint('[GENET][BOOTSTRAP] auth_uid=${user.uid}');
     debugPrint('[GENET][BOOTSTRAP] is_anonymous=${user.isAnonymous}');
+  } on FirebaseAuthException catch (e) {
+    debugPrint(
+      '[GENET][BOOTSTRAP][ERROR] FirebaseAuthException code=${e.code} message=${e.message}',
+    );
+    rethrow;
   } catch (e, st) {
     debugPrint('[GENET][BOOTSTRAP][ERROR] $e');
     debugPrint('[GENET][BOOTSTRAP][ERROR] $st');
