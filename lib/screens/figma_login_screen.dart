@@ -112,9 +112,9 @@ class _FigmaLoginScreenState extends State<FigmaLoginScreen>
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 8),
                               _GenetLogoGlow(pulse: _pulseController),
-                              const SizedBox(height: 40),
+                              const SizedBox(height: 24),
                               Text(
                                 'ברוכים הבאים',
                                 style: TextStyle(
@@ -134,7 +134,7 @@ class _FigmaLoginScreenState extends State<FigmaLoginScreen>
                                 ),
                                 textAlign: TextAlign.center,
                               ),
-                              const SizedBox(height: 36),
+                              const SizedBox(height: 32),
                               _FuturisticField(
                                 controller: _emailController,
                                 hint: 'אימייל',
@@ -300,8 +300,8 @@ class _GenetLogoGlow extends StatelessWidget {
     return Column(
       children: [
         Container(
-          width: 88,
-          height: 88,
+          width: 162,
+          height: 162,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             gradient: RadialGradient(
@@ -313,24 +313,25 @@ class _GenetLogoGlow extends StatelessWidget {
             boxShadow: [
               BoxShadow(
                 color: const Color(0xFF42A5F5).withValues(alpha: 0.45 * glow),
-                blurRadius: 36,
-                spreadRadius: 4,
+                blurRadius: 48,
+                spreadRadius: 6,
               ),
               BoxShadow(
                 color: const Color(0xFF39FF88).withValues(alpha: 0.12 * glow),
-                blurRadius: 48,
-                spreadRadius: 2,
+                blurRadius: 60,
+                spreadRadius: 3,
               ),
             ],
           ),
           alignment: Alignment.center,
-          child: Icon(
-            Icons.shield_moon_rounded,
-            size: 44,
-            color: Colors.white.withValues(alpha: 0.95),
+          child: Image.asset(
+            'assets/images/genet_logo.png',
+            width: 140,
+            height: 140,
+            fit: BoxFit.contain,
           ),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 12),
         ShaderMask(
           shaderCallback: (bounds) {
             return LinearGradient(
@@ -344,9 +345,9 @@ class _GenetLogoGlow extends StatelessWidget {
           child: Text(
             'GENET',
             style: TextStyle(
-              fontSize: 42,
+              fontSize: 47,
               fontWeight: FontWeight.w800,
-              letterSpacing: 8,
+              letterSpacing: 9,
               shadows: [
                 Shadow(
                   color: const Color(0xFF42A5F5).withValues(alpha: 0.8 * glow),
