@@ -12,7 +12,20 @@
           "package_name": "com.example.genet_final"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "449485085204-5s85k41p67k0elv0vnun95nib3m7gf72.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.genet_final",
+            "certificate_hash": "4628b0f9998383549736eb0055d4aada0e45abb0"
+          }
+        },
+        {
+          "client_id": "449485085204-14tdn85c0uih990u9v8c7p4n1n6i67j5.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCoPvmhZfiNAMiYCgfxGem-Kp6abRugGiM"
@@ -20,7 +33,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "449485085204-14tdn85c0uih990u9v8c7p4n1n6i67j5.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "449485085204-adjpu0v54oe73acq00htpsq0p61ibf82.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.genetFinal"
+              }
+            }
+          ]
         }
       }
     },
@@ -31,7 +56,12 @@
           "package_name": "com.example.genet_mvp"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "449485085204-14tdn85c0uih990u9v8c7p4n1n6i67j5.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCoPvmhZfiNAMiYCgfxGem-Kp6abRugGiM"
@@ -39,7 +69,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "449485085204-14tdn85c0uih990u9v8c7p4n1n6i67j5.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "449485085204-adjpu0v54oe73acq00htpsq0p61ibf82.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.genetFinal"
+              }
+            }
+          ]
         }
       }
     }
