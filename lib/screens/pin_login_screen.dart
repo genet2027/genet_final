@@ -8,6 +8,7 @@ import '../core/user_role.dart';
 import '../core/pin_storage.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../repositories/parent_profile_repository.dart';
+import '../core/safe_navigation.dart';
 import '../theme/app_theme.dart';
 import 'parent_profile_setup_screen.dart';
 import 'parent_shell.dart';
@@ -85,7 +86,7 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
         title: const Text('אימות הורה'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => safeBackToWelcome(context, 'PinLoginScreen'),
         ),
       ),
       body: Padding(

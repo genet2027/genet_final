@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/config/genet_config.dart';
+import '../core/safe_navigation.dart';
 import '../core/user_role.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../repositories/parent_profile_repository.dart';
@@ -105,7 +106,9 @@ class _ParentProfileSetupScreenState extends State<ParentProfileSetupScreen> {
           title: const Text('פרטי הורה'),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: _saving ? null : () => Navigator.of(context).maybePop(),
+            onPressed: _saving
+                ? null
+                : () => safeBackToWelcome(context, 'ParentProfileSetupScreen'),
           ),
         ),
         body: AbsorbPointer(

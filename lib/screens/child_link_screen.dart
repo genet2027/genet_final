@@ -8,16 +8,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../core/safe_navigation.dart';
 import '../debug_firebase_state.dart';
 import '../core/config/genet_config.dart';
 import '../core/firebase_auth_guard.dart';
-import '../core/user_role.dart';
 import '../repositories/child_link_status_repository.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../repositories/pending_link_repository.dart';
 import '../services/relevant_installed_apps_engine.dart';
-import 'auth_screen.dart';
 import 'child_home_screen.dart';
 
 /// Child device: link to parent by scanning QR (payload = 4-digit code) or entering 4-digit manual code.
@@ -52,30 +51,17 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
     super.dispose();
   }
 
-  Future<bool> _ensureAuthenticatedForPairing() async {
-    try {
-      requireFirebaseUser();
-    } catch (_) {
-      // Fall through to auth redirect.
-    }
-    if (firebaseUserIsAuthenticated()) return true;
-
-    debugPrint('[GENET][AUTH_GATE] child_redirect_to_auth');
-    if (!mounted) return false;
-    final authed = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute<bool>(
-        builder: (_) => const AuthScreen(role: kUserRoleChild),
-      ),
-    );
-    return authed == true;
+  Future<bool> _ensureFirebaseUserForPairing() async {
+    if (firebaseUserExists()) return true;
+    debugPrint('[GENET][AUTH_GATE] child_missing_firebase_user');
+    return false;
   }
 
   Future<void> _connectWithCode(String code) async {
     developer.log('Manual code connection: entered code=$code', name: 'Sync');
-    if (!await _ensureAuthenticatedForPairing()) {
+    if (!await _ensureFirebaseUserForPairing()) {
       if (mounted) {
-        setState(() => _error = 'נדרשת התחברות ילד לפני החיבור להורה.');
+        setState(() => _error = 'לא ניתן להתחבר להורה כרגע. נסה שוב.');
       }
       return;
     }
@@ -203,10 +189,18 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
       GenetConfig.syncToNative();
       if (!mounted) return;
       debugPrint('[GENET][ONBOARDING] child_pairing_completed');
-      developer.log('Manual code connection: navigating to child home (parent screen will update via Firebase)', name: 'Sync');
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const ChildHomeScreen()),
+      developer.log('Manual code connection: success, navigating to child home', name: 'Sync');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('ההתחברות הצליחה 🎉'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 1600));
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(builder: (_) => const ChildHomeScreen()),
+        (route) => false,
       );
     } catch (e) {
       if (attemptParentId != null &&
@@ -269,7 +263,7 @@ class _ChildLinkScreenState extends State<ChildLinkScreen> {
           title: const Text('חיבור להורה'),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => safeBackToWelcome(context, 'ChildLinkScreen'),
           ),
         ),
         body: _linking

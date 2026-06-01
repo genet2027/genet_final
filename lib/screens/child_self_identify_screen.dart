@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../repositories/children_repository.dart';
+import '../core/safe_navigation.dart';
 import '../theme/app_theme.dart';
 import '../widgets/natural_text_field.dart';
 import 'child_link_screen.dart';
@@ -64,7 +65,7 @@ class _ChildSelfIdentifyScreenState extends State<ChildSelfIdentifyScreen> {
           title: const Text('פרטי ילד'),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => safeBackToWelcome(context, 'ChildSelfIdentifyScreen'),
           ),
         ),
         body: SingleChildScrollView(

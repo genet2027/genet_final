@@ -1,11 +1,22 @@
 import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-/// Premium futuristic login UI (Figma-inspired). Visual-only scaffold.
+import '../core/auth_flow_helpers.dart';
+import '../core/safe_navigation.dart';
+import '../core/user_role.dart';
+import '../services/google_auth_service.dart';
+import 'auth_screen.dart';
+import 'role_select_screen.dart';
+
+/// Premium futuristic login UI (Figma-inspired).
 class FigmaLoginScreen extends StatefulWidget {
-  const FigmaLoginScreen({super.key});
+  const FigmaLoginScreen({super.key, this.popOnSuccess = false});
+
+  /// When true, pops back to the caller after auth (e.g. child link gate).
+  final bool popOnSuccess;
 
   @override
   State<FigmaLoginScreen> createState() => _FigmaLoginScreenState();
@@ -31,6 +42,7 @@ class _FigmaLoginScreenState extends State<FigmaLoginScreen>
   @override
   void initState() {
     super.initState();
+    debugPrint('[GENET][LOGIN_UI] custom login screen opened');
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2400),
@@ -56,28 +68,150 @@ class _FigmaLoginScreenState extends State<FigmaLoginScreen>
     super.dispose();
   }
 
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red.shade700,
+      ),
+    );
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
   Future<void> _onLogin() async {
+    debugPrint('[GENET][LOGIN_UI] email login tapped');
     if (!_formKey.currentState!.validate()) return;
+
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+    if (email.isEmpty || password.isEmpty) {
+      _showError('יש למלא אימייל וסיסמה.');
+      return;
+    }
+
     setState(() => _loading = true);
-    await Future<void>.delayed(const Duration(milliseconds: 900));
-    if (mounted) setState(() => _loading = false);
+    try {
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      final user = await authFlowReloadCurrentUser();
+      if (user == null) {
+        debugPrint('[GENET][LOGIN_UI] auth error: no current user after sign-in');
+        _showError('לא נמצא משתמש מחובר. התחבר מחדש.');
+        return;
+      }
+      if (user.emailVerified) {
+        debugPrint('[GENET][LOGIN_UI] auth success');
+        if (!mounted) return;
+        await routeAfterVerifiedLogin(context, popOnSuccess: widget.popOnSuccess);
+        return;
+      }
+      debugPrint('[GENET][LOGIN_UI] auth success (email verification required)');
+      if (!mounted) return;
+      await openEmailVerificationAuthScreen(context);
+    } on FirebaseAuthException catch (e) {
+      debugPrint('[GENET][LOGIN_UI] auth error: ${e.code} ${e.message}');
+      _showError(authFlowHebrewAuthError(e));
+    } catch (e) {
+      debugPrint('[GENET][LOGIN_UI] auth error: $e');
+      _showError('שגיאה בלתי צפויה. נסה שוב.');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
-  void _onRegisterTap() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('הרשמה — יחובר בקרוב')),
+  Future<void> _onForgotPassword() async {
+    debugPrint('[GENET][LOGIN_UI] forgot password tapped');
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      _showError('הכנס אימייל כדי לאפס סיסמה');
+      return;
+    }
+    setState(() => _loading = true);
+    try {
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+      _showMessage('שלחנו קישור לאיפוס סיסמה למייל');
+    } on FirebaseAuthException catch (e) {
+      debugPrint('[GENET][LOGIN_UI] auth error: ${e.code} ${e.message}');
+      _showError(authFlowHebrewPasswordResetError(e));
+    } catch (e) {
+      debugPrint('[GENET][LOGIN_UI] auth error: $e');
+      _showError('שגיאה בלתי צפויה. נסה שוב.');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _onRegisterTap() async {
+    debugPrint('[GENET][LOGIN_UI] register tapped');
+    final role = await getUserRole();
+    if (!mounted) return;
+    if (role != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => AuthScreen(role: role, initialLoginMode: false),
+        ),
+      );
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => const RoleSelectScreen(forRegistration: true),
+      ),
     );
   }
 
-  void _onGoogleSignIn() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Google Sign-In — יחובר בקרוב')),
-    );
+  Future<void> _onGoogleSignIn() async {
+    debugPrint('[GENET][LOGIN_UI] google login tapped');
+    setState(() => _loading = true);
+    try {
+      await signInWithGoogle();
+      final user = await authFlowReloadCurrentUser();
+      if (user == null) {
+        debugPrint(
+          '[GENET][LOGIN_UI] google login failed: no current user after sign-in',
+        );
+        _showError('לא נמצא משתמש מחובר. התחבר מחדש.');
+        return;
+      }
+      debugPrint('[GENET][LOGIN_UI] google login success');
+      if (!mounted) return;
+      await routeAfterVerifiedLogin(context, popOnSuccess: widget.popOnSuccess);
+    } on GoogleSignInCanceledException {
+      debugPrint('[GENET][LOGIN_UI] google login failed: canceled');
+    } on FirebaseAuthException catch (e) {
+      logGoogleSignInFailure(e);
+      _showError(authFlowHebrewGoogleSignInError(e));
+    } catch (e) {
+      logGoogleSignInFailure(e);
+      final message = authFlowHebrewGoogleSignInError(e);
+      if (message.isNotEmpty) {
+        _showError(message);
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Directionality(
+    return PopScope(
+      canPop: Navigator.canPop(context),
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || _loading) return;
+        safeBackToWelcome(context, 'FigmaLoginScreen');
+      },
+      child: Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
         body: Stack(
@@ -181,18 +315,7 @@ class _FigmaLoginScreenState extends State<FigmaLoginScreen>
                               Align(
                                 alignment: Alignment.centerLeft,
                                 child: TextButton(
-                                  onPressed: _loading
-                                      ? null
-                                      : () {
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(
-                                            const SnackBar(
-                                              content: Text(
-                                                'איפוס סיסמה — יחובר בקרוב',
-                                              ),
-                                            ),
-                                          );
-                                        },
+                                  onPressed: _loading ? null : _onForgotPassword,
                                   child: Text(
                                     'שכחתי סיסמה?',
                                     style: TextStyle(
@@ -249,6 +372,7 @@ class _FigmaLoginScreenState extends State<FigmaLoginScreen>
             ),
           ],
         ),
+      ),
       ),
     );
   }

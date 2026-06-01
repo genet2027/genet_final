@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/safe_navigation.dart';
 import '../theme/app_theme.dart';
 
 /// מערכת שעות למחר – מסך הילד.
@@ -24,7 +25,7 @@ class SchoolScheduleScreen extends StatelessWidget {
           title: const Text('מערכת שעות למחר'),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => safeBackToChildHome(context, 'SchoolScheduleScreen'),
           ),
         ),
         body: ListView(

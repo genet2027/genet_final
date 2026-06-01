@@ -19,7 +19,7 @@ import '../widgets/parent_vpn_health_indicator.dart';
 import '../widgets/rounded_card.dart';
 import 'backup_support_screen.dart';
 import 'night_mode_settings_screen.dart';
-import 'role_select_screen.dart';
+import 'genet_auth_entry.dart';
 
 /// Settings tab content: entries to Night Mode, VPN controls, Backup & Support, and Logout.
 class SettingsScreen extends StatefulWidget {
@@ -653,9 +653,9 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     try {
       await performParentLogout();
       if (!context.mounted) return;
-      debugPrint('[GENET][PARENT_LOGOUT] navigated_to_role_select');
+      debugPrint('[GENET][PARENT_LOGOUT] navigated_to_login');
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const RoleSelectScreen()),
+        MaterialPageRoute(builder: (_) => const GenetAuthEntry()),
         (route) => false,
       );
     } catch (e) {

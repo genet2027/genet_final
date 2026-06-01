@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/safe_navigation.dart';
 import '../core/extension_requests.dart';
 import '../features/blocked_apps/blocked_package_matching.dart';
 import '../models/installed_app.dart';
@@ -224,7 +225,7 @@ class _BlockedAppsTimesScreenState extends State<BlockedAppsTimesScreen> {
           title: const Text('אפליקציות חסומות וזמני שימוש'),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => safeBackToParentShell(context, 'BlockedAppsTimesScreen'),
           ),
         ),
         body: _loading

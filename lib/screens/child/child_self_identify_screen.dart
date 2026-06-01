@@ -2,6 +2,7 @@
 /// This file is no longer part of the active app flow.
 /// Use the root version in lib/screens/ instead.
 /// Safe to delete after final cleanup phase.
+library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';

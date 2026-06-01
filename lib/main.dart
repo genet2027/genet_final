@@ -19,7 +19,7 @@ import 'services/installed_apps_bridge.dart';
 import 'services/json_translations.dart';
 import 'services/night_mode_service.dart';
 import 'theme/app_theme.dart';
-import 'package:genet_final/screens/figma_login_screen.dart';
+import 'screens/genet_auth_entry.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -152,8 +152,8 @@ class _GenetStartupGateState extends State<GenetStartupGate> {
   }
 }
 
-/// Role Selection Screen (Parent/Child) is the permanent initial route (home).
-/// Content Library is not a main screen; Parent Dashboard is reached after PIN login.
+/// Role Selection Screen is used after login for role pick / registration.
+/// Custom [GenetAuthEntry] + [FigmaLoginScreen] is the unauthenticated app entry.
 class GenetApp extends StatefulWidget {
   const GenetApp({super.key, required this.nightModeService});
   final NightModeService nightModeService;
@@ -227,7 +227,7 @@ class _GenetAppState extends State<GenetApp> with WidgetsBindingObserver {
               textDirection: TextDirection.rtl,
               child: child ?? const SizedBox.shrink(),
             ),
-            home: const FigmaLoginScreen(),
+            home: const GenetAuthEntry(),
           );
         },
       ),

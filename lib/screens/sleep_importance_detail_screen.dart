@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/safe_navigation.dart';
 import '../theme/app_theme.dart';
 
 /// למה שינה חשובה? – הסבר על שינה, מוח, שרירים וביצועים.
@@ -15,7 +16,7 @@ class SleepImportanceDetailScreen extends StatelessWidget {
           title: const Text('למה שינה חשובה?'),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => safeBackToChildHome(context, 'SleepImportanceDetailScreen'),
           ),
         ),
         body: ListView(

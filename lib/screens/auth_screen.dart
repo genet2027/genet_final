@@ -3,28 +3,30 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 
+import '../core/auth_flow_helpers.dart';
 import '../core/config/genet_config.dart';
+import '../core/safe_navigation.dart';
 import '../core/user_role.dart';
 import '../repositories/child_profile_repository.dart';
 import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../repositories/parent_profile_repository.dart';
 import '../theme/app_theme.dart';
-import 'child_home_screen.dart';
 import 'child_link_screen.dart';
-import 'child_self_identify_screen.dart';
-import 'parent_profile_setup_screen.dart';
 import 'parent_shell.dart';
+import 'welcome_screen.dart';
 
 /// Basic email/password Firebase auth for parent or child before pairing.
 class AuthScreen extends StatefulWidget {
   const AuthScreen({
     super.key,
     required this.role,
+    this.initialLoginMode = true,
     this.onAuthenticated,
   });
 
   final String role;
+  final bool initialLoginMode;
   final VoidCallback? onAuthenticated;
 
   @override
@@ -41,7 +43,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
   bool _loading = false;
   bool _verificationBusy = false;
-  bool _isLoginMode = true;
+  late bool _isLoginMode;
   bool _waitingForEmailVerification = false;
   bool _emailVerifyFromLogin = false;
   String? _pendingRegisterNextRoute;
@@ -68,6 +70,24 @@ class _AuthScreenState extends State<AuthScreen> {
   String get _birthDateLabel {
     if (_birthDate == null) return 'תאריך לידה';
     return DateFormat('dd/MM/yyyy', 'he').format(_birthDate!);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _isLoginMode = widget.initialLoginMode;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _maybeOpenEmailVerificationGate();
+    });
+  }
+
+  Future<void> _maybeOpenEmailVerificationGate() async {
+    if (!mounted || _waitingForEmailVerification) return;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || user.isAnonymous) return;
+    final reloaded = await authFlowReloadCurrentUser();
+    if (!mounted || reloaded == null || reloaded.emailVerified) return;
+    _enterEmailVerificationGate(fromLogin: true);
   }
 
   InputDecoration _fieldDecoration(String hint) {
@@ -121,7 +141,7 @@ class _AuthScreenState extends State<AuthScreen> {
       debugPrint(
         '[GENET][PASSWORD_RESET] send_error code=${e.code} message=${e.message}',
       );
-      _showError('${_hebrewPasswordResetError(e)} (${e.code})');
+      _showError('${authFlowHebrewPasswordResetError(e)} (${e.code})');
     } catch (e) {
       debugPrint('[GENET][PASSWORD_RESET] send_error code=unexpected message=$e');
       _showError('שגיאה בלתי צפויה. נסה שוב.');
@@ -221,12 +241,7 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 
-  Future<User?> _reloadCurrentUser() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return null;
-    await user.reload();
-    return FirebaseAuth.instance.currentUser;
-  }
+  Future<User?> _reloadCurrentUser() => authFlowReloadCurrentUser();
 
   Future<String> _reloadForEmailVerifyDiag() async {
     final user = FirebaseAuth.instance.currentUser;
@@ -373,133 +388,13 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  String _hebrewPasswordResetError(FirebaseAuthException e) {
-    switch (e.code) {
-      case 'invalid-email':
-        return 'כתובת האימייל אינה תקינה.';
-      case 'user-not-found':
-        return 'לא נמצא חשבון עם אימייל זה.';
-      case 'network-request-failed':
-        return 'בעיית רשת. בדוק את החיבור לאינטרנט.';
-      case 'too-many-requests':
-        return 'יותר מדי ניסיונות. נסה שוב מאוחר יותר.';
-      default:
-        return 'לא ניתן לשלוח קישור לאיפוס סיסמה. נסה שוב.';
-    }
-  }
-
-  String _hebrewAuthError(FirebaseAuthException e) {
-    switch (e.code) {
-      case 'invalid-email':
-        return 'כתובת האימייל אינה תקינה.';
-      case 'user-disabled':
-        return 'החשבון הושבת.';
-      case 'user-not-found':
-      case 'wrong-password':
-      case 'invalid-credential':
-        return 'אימייל או סיסמה שגויים.';
-      case 'email-already-in-use':
-        return 'כתובת האימייל כבר בשימוש.';
-      case 'weak-password':
-        return 'הסיסמה חלשה מדי. בחר סיסמה ארוכה יותר.';
-      case 'network-request-failed':
-        return 'בעיית רשת. בדוק את החיבור לאינטרנט.';
-      default:
-        return 'שגיאת התחברות. נסה שוב.';
-    }
-  }
-
   Future<void> _completeAuthSuccess({required bool isLoginMode}) async {
-    debugPrint(
-      '[GENET][ONBOARDING_FLOW] isLoginMode=${isLoginMode ? "loginMode" : "registerMode"}',
+    await completePostAuthNavigation(
+      context,
+      role: widget.role,
+      isLoginMode: isLoginMode,
+      onAuthenticated: widget.onAuthenticated,
     );
-    await GenetConfig.commitUserRole(widget.role);
-    if (!mounted) return;
-    if (widget.onAuthenticated != null) {
-      widget.onAuthenticated!();
-      Navigator.pop(context, true);
-      return;
-    }
-    if (Navigator.of(context).canPop()) {
-      Navigator.pop(context, true);
-      return;
-    }
-    if (widget.role == kUserRoleParent) {
-      if (isLoginMode) {
-        final parentId = await getOrCreateParentId();
-        final profile = await getParentProfile(parentId);
-        if (!mounted) return;
-        final hasCompletedProfile = isParentProfileComplete(profile);
-        debugPrint(
-          '[GENET][ONBOARDING_FLOW] hasCompletedProfile=$hasCompletedProfile',
-        );
-        if (hasCompletedProfile) {
-          debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ParentShell');
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute<void>(builder: (_) => const ParentShell()),
-          );
-          return;
-        }
-        debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ParentProfileSetupScreen');
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute<void>(
-            builder: (_) => ParentProfileSetupScreen(
-              completedBuilder: (_) => const ParentShell(),
-            ),
-          ),
-        );
-        return;
-      }
-      debugPrint('[GENET][ONBOARDING_FLOW] hasCompletedProfile=false');
-      debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ParentShell');
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute<void>(builder: (_) => const ParentShell()),
-      );
-      return;
-    }
-    if (widget.role == kUserRoleChild) {
-      if (isLoginMode) {
-        final verified = await hasVerifiedChildCanonicalConnection();
-        if (!mounted) return;
-        if (verified) {
-          debugPrint('[GENET][ONBOARDING_FLOW] hasCompletedProfile=true');
-          debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ChildHomeScreen');
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute<void>(builder: (_) => const ChildHomeScreen()),
-          );
-          return;
-        }
-        final hasProfile = await isChildProfileComplete();
-        if (!mounted) return;
-        debugPrint(
-          '[GENET][ONBOARDING_FLOW] hasCompletedProfile=$hasProfile',
-        );
-        if (hasProfile) {
-          debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ChildLinkScreen');
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute<void>(builder: (_) => const ChildLinkScreen()),
-          );
-          return;
-        }
-        debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ChildSelfIdentifyScreen');
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute<void>(builder: (_) => const ChildSelfIdentifyScreen()),
-        );
-        return;
-      }
-      debugPrint('[GENET][ONBOARDING_FLOW] hasCompletedProfile=false');
-      debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ChildLinkScreen');
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute<void>(builder: (_) => const ChildLinkScreen()),
-      );
-    }
   }
 
   void _logRegisterProfile({
@@ -564,7 +459,7 @@ class _AuthScreenState extends State<AuthScreen> {
       _enterEmailVerificationGate(fromLogin: true);
     } on FirebaseAuthException catch (e) {
       debugPrint('[GENET][AUTH][ERROR] sign_in code=${e.code} message=${e.message}');
-      _showError('${_hebrewAuthError(e)} (${e.code})');
+      _showError('${authFlowHebrewAuthError(e)} (${e.code})');
     } catch (e) {
       debugPrint('[GENET][AUTH][ERROR] unexpected: $e');
       _showError('שגיאה בלתי צפויה. נסה שוב.');
@@ -660,7 +555,7 @@ class _AuthScreenState extends State<AuthScreen> {
       }
     } on FirebaseAuthException catch (e) {
       debugPrint('[GENET][AUTH][ERROR] register code=${e.code} message=${e.message}');
-      _showError('${_hebrewAuthError(e)} (${e.code})');
+      _showError('${authFlowHebrewAuthError(e)} (${e.code})');
     } catch (e) {
       debugPrint('[GENET][AUTH][ERROR] unexpected: $e');
       _showError('שגיאה בלתי צפויה. נסה שוב.');
@@ -891,7 +786,12 @@ class _AuthScreenState extends State<AuthScreen> {
                       _exitEmailVerificationGate();
                       return;
                     }
-                    Navigator.pop(context, false);
+                    safeBackOrNavigate(
+                      context,
+                      fromScreen: 'AuthScreen',
+                      fallback: const WelcomeScreen(),
+                      popResult: false,
+                    );
                   },
           ),
         ),

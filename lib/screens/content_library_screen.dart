@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/safe_navigation.dart';
 import '../models/child_model.dart';
 import '../theme/app_theme.dart';
 
@@ -54,7 +55,11 @@ class _ContentLibraryScreenState extends State<ContentLibraryScreen> {
                                   title: const Text('אח גדול'),
                                   leading: IconButton(
                                     icon: const Icon(Icons.arrow_back),
-                                    onPressed: () => Navigator.pop(context),
+                                    onPressed: () => safeBackOrNavigate(
+                                      context,
+                                      fromScreen: 'ContentLibraryBigBrother',
+                                      fallback: const ContentLibraryScreen(),
+                                    ),
                                   ),
                                 ),
                                 body: SingleChildScrollView(

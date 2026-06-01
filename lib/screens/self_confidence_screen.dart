@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/safe_navigation.dart';
 import '../theme/app_theme.dart';
 
 /// אח גדול – נושאים: אלימות, פגיעה מינית, חרמות.
@@ -21,7 +22,7 @@ class SelfConfidenceScreen extends StatelessWidget {
           title: const Text('אח גדול'),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => safeBackToParentShell(context, 'SelfConfidenceScreen'),
           ),
         ),
         body: ListView(

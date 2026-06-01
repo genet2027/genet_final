@@ -5,7 +5,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../core/safe_navigation.dart';
 import '../debug_firebase_state.dart';
+import '../core/config/genet_config.dart';
 import '../core/firebase_auth_guard.dart';
 import '../core/user_role.dart';
 import '../models/child_entity.dart';
@@ -13,7 +15,7 @@ import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../repositories/pending_link_repository.dart';
 import '../theme/app_theme.dart';
-import 'auth_screen.dart';
+import 'figma_login_screen.dart';
 
 /// Parent: create a pending link with 4-digit code, show QR and code, listen for child to connect.
 /// When child links, add child to list and show success.
@@ -56,12 +58,14 @@ class _AddChildByLinkScreenState extends State<AddChildByLinkScreen> {
         // Fall through to auth redirect.
       }
       if (!firebaseUserIsAuthenticated()) {
-        debugPrint('[GENET][AUTH_GATE] parent_redirect_to_auth');
+        debugPrint('[GENET][AUTH_GATE] parent_redirect_to_login');
+        if (!mounted) return;
+        await GenetConfig.commitUserRole(kUserRoleParent);
         if (!mounted) return;
         final authed = await Navigator.push<bool>(
           context,
           MaterialPageRoute<bool>(
-            builder: (_) => const AuthScreen(role: kUserRoleParent),
+            builder: (_) => const FigmaLoginScreen(popOnSuccess: true),
           ),
         );
         if (!mounted) return;
@@ -231,7 +235,7 @@ class _AddChildByLinkScreenState extends State<AddChildByLinkScreen> {
           title: const Text('חבר ילד'),
           leading: IconButton(
             icon: const Icon(Icons.close),
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => safeBackToParentShell(context, 'AddChildByLinkScreen'),
           ),
         ),
         body: _creating && _code == null

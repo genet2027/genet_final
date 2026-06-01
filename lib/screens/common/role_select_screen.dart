@@ -2,6 +2,7 @@
 /// This file is no longer part of the active app flow.
 /// Use `lib/screens/role_select_screen.dart` instead.
 /// Safe to delete after final cleanup phase.
+library;
 
 import 'package:flutter/material.dart';
 

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../core/config/genet_config.dart';
+import '../core/safe_navigation.dart';
 import '../core/genet_vpn.dart';
 import '../core/user_role.dart';
 import '../core/vpn_remote_child.dart';
@@ -32,7 +33,6 @@ import '../widgets/natural_text_field.dart';
 import 'blocked_apps_times_screen.dart';
 import 'child_link_screen.dart';
 import 'content_library_screen.dart';
-import 'role_select_screen.dart';
 import 'school_schedule_screen.dart';
 
 /// MVP child-initiated disconnect confirmation dialog (widget-tested from [ChildHomeScreen]).
@@ -1594,15 +1594,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
               leading: IconButton(
                 icon: const Icon(Icons.arrow_back),
                 tooltip: l10n.backToRoleSelect,
-                onPressed: () async {
-                  await GenetConfig.commitUserRole(kUserRoleParent);
-                  if (!context.mounted) return;
-                  Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(builder: (context) => const RoleSelectScreen()),
-                    (route) => false,
-                  );
-                },
+                onPressed: () => safeBackToWelcome(context, 'ChildHomeScreen'),
               ),
               actions: const [LanguageSwitcher()],
             ),

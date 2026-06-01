@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 
 import 'package:flutter/material.dart';
 
+import '../core/safe_navigation.dart';
 import '../models/child_entity.dart';
 import '../repositories/child_link_status_repository.dart';
 import '../repositories/child_vpn_health_parse.dart';
@@ -155,7 +156,7 @@ class _ChildrenManagementScreenState extends State<ChildrenManagementScreen> {
           title: const Text('ילדים'),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => safeBackToParentShell(context, 'ChildrenManagementScreen'),
           ),
         ),
         body: _loading

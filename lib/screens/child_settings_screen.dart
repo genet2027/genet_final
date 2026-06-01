@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/safe_navigation.dart';
 import '../models/child_model.dart';
 import '../theme/app_theme.dart';
 import '../widgets/natural_text_field.dart';
@@ -68,7 +69,7 @@ class _ChildSettingsScreenState extends State<ChildSettingsScreen> {
           title: const Text('הגדרת ילד'),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => safeBackToParentShell(context, 'ChildSettingsScreen'),
           ),
         ),
         body: ListView(

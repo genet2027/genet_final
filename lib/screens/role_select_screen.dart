@@ -13,11 +13,15 @@ import 'auth_screen.dart';
 import 'child_home_screen.dart';
 import 'child_link_screen.dart';
 import 'child_self_identify_screen.dart';
+import 'figma_login_screen.dart';
 import 'parent_shell.dart';
 
-/// מסך בחירת תפקיד: הורה או ילד. כניסה ראשית לאפליקציה.
+/// מסך בחירת תפקיד: הורה או ילד — לרישום / בחירת תפקיד אחרי התחברות.
 class RoleSelectScreen extends StatefulWidget {
-  const RoleSelectScreen({super.key});
+  const RoleSelectScreen({super.key, this.forRegistration = false});
+
+  /// When true, unauthenticated users go to register [AuthScreen] (not login).
+  final bool forRegistration;
 
   @override
   State<RoleSelectScreen> createState() => _RoleSelectScreenState();
@@ -53,11 +57,19 @@ class _RoleSelectScreenState extends State<RoleSelectScreen> {
         }
       }
 
-      debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=AuthScreen');
+      debugPrint(
+        '[GENET][ONBOARDING_FLOW] nextRoute='
+        '${widget.forRegistration ? "AuthScreen(register)" : "FigmaLoginScreen"}',
+      );
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (context) => const AuthScreen(role: kUserRoleParent),
+          builder: (context) => widget.forRegistration
+              ? const AuthScreen(
+                  role: kUserRoleParent,
+                  initialLoginMode: false,
+                )
+              : const FigmaLoginScreen(),
         ),
       );
     } finally {
@@ -115,11 +127,19 @@ class _RoleSelectScreenState extends State<RoleSelectScreen> {
       }
 
       debugPrint('[GENET][ONBOARDING_FLOW] hasCompletedProfile=false');
-      debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=AuthScreen');
+      debugPrint(
+        '[GENET][ONBOARDING_FLOW] nextRoute='
+        '${widget.forRegistration ? "AuthScreen(register)" : "FigmaLoginScreen"}',
+      );
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (context) => const AuthScreen(role: kUserRoleChild),
+          builder: (context) => widget.forRegistration
+              ? const AuthScreen(
+                  role: kUserRoleChild,
+                  initialLoginMode: false,
+                )
+              : const FigmaLoginScreen(),
         ),
       );
     } finally {
