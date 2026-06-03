@@ -1,11 +1,12 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/config/genet_config.dart';
 import '../../core/user_role.dart';
 import '../../repositories/parent_child_sync_repository.dart';
-import '../../theme/app_theme.dart';
 import '../settings_screen.dart';
 import '../parent_dashboard_tab.dart';
 import '../required_permissions_screen.dart';
@@ -70,31 +71,66 @@ class _ParentShellState extends State<ParentShell> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final topInset =
+        MediaQuery.paddingOf(context).top + kToolbarHeight;
+
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        appBar: AppBar(title: const Text('הורה'), elevation: 0),
-        body: IndexedStack(
-          index: _selectedIndex,
-          children: const [
-            ParentDashboardTab(),
-            SettingsScreen(),
+        extendBodyBehindAppBar: true,
+        backgroundColor: const Color(0xFF050B18),
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          surfaceTintColor: Colors.transparent,
+          systemOverlayStyle: SystemUiOverlayStyle.light,
+          centerTitle: true,
+          title: Text(
+            'הורה',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
+              color: Colors.white.withValues(alpha: 0.78),
+            ),
+          ),
+        ),
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            const _ParentPremiumBackground(),
+            Padding(
+              padding: EdgeInsets.only(top: topInset),
+              child: IndexedStack(
+                index: _selectedIndex,
+                children: const [
+                  ParentDashboardTab(),
+                  SettingsScreen(),
+                ],
+              ),
+            ),
           ],
         ),
         bottomNavigationBar: Container(
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: const Color(0xFF020B2D),
+            border: Border(
+              top: BorderSide(
+                color: Colors.white.withValues(alpha: 0.08),
+              ),
+            ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.06),
-                blurRadius: 8,
-                offset: const Offset(0, -2),
+                color: Colors.black.withValues(alpha: 0.35),
+                blurRadius: 12,
+                offset: const Offset(0, -3),
               ),
             ],
           ),
           child: SafeArea(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: List.generate(
@@ -121,7 +157,101 @@ class _TabInfo {
   const _TabInfo({required this.icon, required this.label});
 }
 
+class _ParentPremiumBackground extends StatelessWidget {
+  const _ParentPremiumBackground();
+
+  static const List<Color> _gradientColors = [
+    Color(0xFF050B18),
+    Color(0xFF0A1A3A),
+    Color(0xFF0D2B5E),
+    Color(0xFF061224),
+  ];
+
+  static const List<double> _gradientStops = [0.0, 0.35, 0.72, 1.0];
+
+  static final List<_ShellStar> _stars = _buildStars();
+
+  static List<_ShellStar> _buildStars() {
+    final rng = math.Random(42);
+    return List.generate(28, (_) {
+      return _ShellStar(
+        x: rng.nextDouble(),
+        y: rng.nextDouble() * 0.42,
+        radius: rng.nextDouble() * 0.9 + 0.35,
+        opacity: rng.nextDouble() * 0.22 + 0.08,
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: _gradientColors,
+          stops: _gradientStops,
+        ),
+      ),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: RadialGradient(
+            center: const Alignment(0.2, -0.55),
+            radius: 1.1,
+            colors: [
+              const Color(0xFF1E88E5).withValues(alpha: 0.18),
+              Colors.transparent,
+            ],
+          ),
+        ),
+        child: CustomPaint(
+          painter: _ShellStarFieldPainter(stars: _stars),
+        ),
+      ),
+    );
+  }
+}
+
+class _ShellStar {
+  const _ShellStar({
+    required this.x,
+    required this.y,
+    required this.radius,
+    required this.opacity,
+  });
+
+  final double x;
+  final double y;
+  final double radius;
+  final double opacity;
+}
+
+class _ShellStarFieldPainter extends CustomPainter {
+  const _ShellStarFieldPainter({required this.stars});
+
+  final List<_ShellStar> stars;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..style = PaintingStyle.fill;
+    for (final star in stars) {
+      paint.color = Colors.white.withValues(alpha: star.opacity);
+      canvas.drawCircle(
+        Offset(star.x * size.width, star.y * size.height),
+        star.radius,
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ShellStarFieldPainter oldDelegate) => false;
+}
+
 class _NavItem extends StatelessWidget {
+  static const Color _neonGreen = Color(0xFF39FF6A);
+
   final IconData icon;
   final String label;
   final bool selected;
@@ -136,27 +266,59 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final inactiveColor = Colors.white.withValues(alpha: 0.45);
+    final activeColor = _neonGreen;
+
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(14),
+      splashColor: _neonGreen.withValues(alpha: 0.12),
+      highlightColor: Colors.white.withValues(alpha: 0.06),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              size: 26,
-              color: selected ? AppTheme.primaryBlue : Colors.grey.shade600,
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: selected
+                    ? _neonGreen.withValues(alpha: 0.14)
+                    : Colors.transparent,
+                boxShadow: selected
+                    ? [
+                        BoxShadow(
+                          color: _neonGreen.withValues(alpha: 0.22),
+                          blurRadius: 10,
+                        ),
+                      ]
+                    : null,
+              ),
+              child: AnimatedScale(
+                scale: selected ? 1.08 : 1,
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOut,
+                child: Icon(
+                  icon,
+                  size: 26,
+                  color: selected ? activeColor : inactiveColor,
+                ),
+              ),
             ),
             const SizedBox(height: 4),
-            Text(
-              label,
+            AnimatedDefaultTextStyle(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
               style: TextStyle(
                 fontSize: 12,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                color: selected ? AppTheme.primaryBlue : Colors.grey.shade600,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected ? activeColor : inactiveColor,
               ),
+              child: Text(label),
             ),
           ],
         ),
