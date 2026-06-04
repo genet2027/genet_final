@@ -518,6 +518,45 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
     return fields;
   }
 
+  List<_ChildProfileField> _knowYourChildPreviewFields() {
+    final profile = _childDocProfile;
+    final previews = <_ChildProfileField>[];
+
+    void tryAdd(String key, String label) {
+      if (previews.length >= 3) return;
+      final value = _formatProfileValue(profile[key]);
+      if (value == null) return;
+      previews.add(_ChildProfileField(label: label, value: value));
+    }
+
+    tryAdd('favoriteAnimal', 'חיה אהובה');
+    tryAdd('favoriteFood', 'אוכל אהוב');
+    if (previews.length < 3) {
+      final hobbies = _formatProfileValue(profile['hobbies']) ??
+          _formatProfileValue(profile['interests']);
+      if (hobbies != null) {
+        previews.add(_ChildProfileField(label: 'תחביבים', value: hobbies));
+      }
+    }
+
+    return previews;
+  }
+
+  void _openKnowYourChildSheet() {
+    final fields = _childProfileDisplayFields();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return Directionality(
+          textDirection: TextDirection.rtl,
+          child: _KnowYourChildSheet(fields: fields),
+        );
+      },
+    );
+  }
+
   Future<void> _pushExistingScreen(Widget screen, {VoidCallback? onReturn}) async {
     if (_navigationLocked || !mounted) return;
     _navigationLocked = true;
@@ -720,6 +759,14 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
               ),
               const SizedBox(height: _DashboardTokens.sectionGap),
               _MessageLaunchCard(onTap: _openMessagesScreen),
+              if (!_showNoChildState) ...[
+                const SizedBox(height: _DashboardTokens.sectionGap),
+                _KnowYourChildCard(
+                  loading: _loading,
+                  previewFields: _knowYourChildPreviewFields(),
+                  onTap: _openKnowYourChildSheet,
+                ),
+              ],
             ],
           ),
         ),
@@ -1244,6 +1291,245 @@ class _QuickActionCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _KnowYourChildCard extends StatelessWidget {
+  const _KnowYourChildCard({
+    required this.loading,
+    required this.previewFields,
+    required this.onTap,
+  });
+
+  final bool loading;
+  final List<_ChildProfileField> previewFields;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return _DashboardTapTarget(
+      onTap: onTap,
+      borderRadius: _DashboardTokens.cardRadiusBR,
+      child: Container(
+        decoration: _DashboardTokens.panelDecoration(),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'הכר את הילד שלך',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white.withValues(alpha: 0.95),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'גלה מה הילד אוהב, מה מרגיע אותו ומה חשוב לו',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          height: 1.3,
+                          color: Colors.white.withValues(alpha: 0.48),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_left_rounded,
+                  color: Colors.white.withValues(alpha: 0.35),
+                  size: 18,
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            if (loading)
+              const _SkeletonBar(width: double.infinity, height: 36)
+            else if (previewFields.isEmpty)
+              Text(
+                'עדיין אין מספיק פרטים מהשאלון',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  height: 1.35,
+                  color: Colors.white.withValues(alpha: 0.42),
+                ),
+              )
+            else
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < previewFields.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 4),
+                    Text(
+                      '${previewFields[i].label}: ${previewFields[i].value}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.78),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _KnowYourChildSheet extends StatelessWidget {
+  const _KnowYourChildSheet({required this.fields});
+
+  final List<_ChildProfileField> fields;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+
+    return Padding(
+      padding: EdgeInsets.only(
+        top: MediaQuery.paddingOf(context).top * 0.15,
+      ),
+      child: DraggableScrollableSheet(
+        initialChildSize: 0.72,
+        minChildSize: 0.45,
+        maxChildSize: 0.92,
+        expand: false,
+        builder: (context, scrollController) {
+          return Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFF061224),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+              border: Border.all(
+                color: _DashboardTokens.fieldBorder,
+                width: 1,
+              ),
+            ),
+            child: Column(
+              children: [
+                const SizedBox(height: 10),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.22),
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'הכר את הילד שלך',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white.withValues(alpha: 0.97),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: Icon(
+                          Icons.close_rounded,
+                          color: Colors.white.withValues(alpha: 0.55),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: fields.isEmpty
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(
+                              'עדיין אין מספיק פרטים מהשאלון',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w500,
+                                height: 1.4,
+                                color: Colors.white.withValues(alpha: 0.45),
+                              ),
+                            ),
+                          ),
+                        )
+                      : ListView.separated(
+                          controller: scrollController,
+                          padding: EdgeInsets.fromLTRB(20, 4, 20, 16 + bottomInset),
+                          itemCount: fields.length,
+                          separatorBuilder: (context, _) =>
+                              const SizedBox(height: 14),
+                          itemBuilder: (context, index) {
+                            final field = fields[index];
+                            return _KnowYourChildSheetRow(field: field);
+                          },
+                        ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _KnowYourChildSheetRow extends StatelessWidget {
+  const _KnowYourChildSheetRow({required this.field});
+
+  final _ChildProfileField field;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: _DashboardTokens.fieldFill,
+        borderRadius: _DashboardTokens.cardRadiusBR,
+        border: Border.all(color: _DashboardTokens.fieldBorder, width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            field.label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.white.withValues(alpha: 0.5),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            field.value,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              height: 1.35,
+              color: Colors.white.withValues(alpha: 0.92),
+            ),
+          ),
+        ],
       ),
     );
   }
