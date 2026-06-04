@@ -30,6 +30,9 @@ class _DashboardTokens {
   static const double sectionGap = 10;
   static const double cardGap = 8;
   static const double horizontalPad = 16;
+  static const double scrollBottomPadding = 100;
+  static const double quickStatsRowHeight = 68;
+  static const double quickActionsRowHeight = 72;
   static const double cardRadius = 18;
   static const BorderRadius cardRadiusBR =
       BorderRadius.all(Radius.circular(cardRadius));
@@ -74,6 +77,10 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
   int _blockedCount = 0;
   bool _sleepLockActive = false;
   String? _genetPackageName;
+  Map<String, dynamic> _childDocProfile = const {};
+  String? _sleepBedTime;
+  String? _sleepWakeTime;
+  String? _childProfileCardLogChildId;
 
   bool _childrenStreamReady = false;
   bool _childDocReady = false;
@@ -84,8 +91,19 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
   StreamSubscription<Map<String, dynamic>?>? _childDocSub;
   StreamSubscription<Map<String, dynamic>?>? _sleepLockSub;
 
-  // TODO(GENET): Wire daily screen-time when usage stats exist in the app.
-  static const String _screenTimeValue = '--';
+  int? _screenTimeMinutes;
+  String _screenTimeSource = 'none';
+  Object? _screenTimeRawValue;
+  String? _screenTimeLogChildId;
+
+  static const List<String> _screenTimeDocKeys = [
+    'screenTimeMinutes',
+    'dailyScreenTimeMinutes',
+    'screenTimeMinutesToday',
+    'usageMinutesToday',
+    'screenTime',
+    'dailyScreenTime',
+  ];
 
   @override
   void initState() {
@@ -148,6 +166,11 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
         _isConnected != isConnected) {
       _childDocReady = false;
       _sleepLockReady = false;
+      _screenTimeLogChildId = null;
+      _screenTimeMinutes = null;
+      _screenTimeSource = 'none';
+      _screenTimeRawValue = null;
+      _childProfileCardLogChildId = null;
     }
 
     _displayChild = child;
@@ -184,6 +207,12 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
       _deviceName = null;
       _blockedCount = 0;
       _sleepLockActive = false;
+      _childDocProfile = const {};
+      _sleepBedTime = null;
+      _sleepWakeTime = null;
+      _screenTimeMinutes = null;
+      _screenTimeSource = 'none';
+      _screenTimeRawValue = null;
       _childDocReady = true;
       _sleepLockReady = true;
       _maybeFinishInitialLoad();
@@ -195,14 +224,25 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
       if (!mounted) return;
       final blocked = _blockedPackagesFromDoc(data);
       final device = _deviceNameFromDoc(data);
+      final profileRaw = data?['profile'];
+      final profile = profileRaw is Map
+          ? Map<String, dynamic>.from(profileRaw)
+          : const <String, dynamic>{};
+      _applyScreenTimeFromDoc(data);
+      final snapshot = data == null
+          ? const <String, dynamic>{}
+          : Map<String, dynamic>.from(data);
       setState(() {
         _deviceName = device;
         _blockedCount = blocked;
+        _childDocProfile = profile;
         if (data != null) {
           final status = data['connectionStatus'] as String?;
           _isConnected = isConnectionStatusConnected(status);
         }
       });
+      _logChildProfileCardOnce(childId, snapshot);
+      _logScreenTimeCardOnce();
       if (!_childDocReady) {
         _childDocReady = true;
         debugPrint(
@@ -215,7 +255,15 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
     _sleepLockSub = watchChildSleepLockStream(childId).listen((data) {
       if (!mounted) return;
       final active = data?['isActive'] == true;
-      setState(() => _sleepLockActive = active);
+      final start = data?['startTime'];
+      final end = data?['endTime'];
+      setState(() {
+        _sleepLockActive = active;
+        _sleepBedTime =
+            start is String && start.trim().isNotEmpty ? start.trim() : null;
+        _sleepWakeTime =
+            end is String && end.trim().isNotEmpty ? end.trim() : null;
+      });
       if (!_sleepLockReady) {
         _sleepLockReady = true;
         debugPrint(
@@ -264,12 +312,211 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
     if (!_loading) return;
     if (noChild) {
       debugPrint('[GENET][PARENT_DASHBOARD] No Child Connected');
+      _screenTimeMinutes = null;
+      _screenTimeSource = 'none';
+      _screenTimeRawValue = null;
+      _logScreenTimeCardOnce();
     }
     setState(() => _loading = false);
   }
 
+  int? _parseScreenTimeMinutes(dynamic value) {
+    if (value == null) return null;
+    if (value is num && value >= 0) return value.round();
+    if (value is String) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty || trimmed == '--') return null;
+      return int.tryParse(trimmed);
+    }
+    return null;
+  }
+
+  void _applyScreenTimeFromDoc(Map<String, dynamic>? data) {
+    _screenTimeMinutes = null;
+    _screenTimeSource = 'none';
+    _screenTimeRawValue = null;
+    if (data == null) return;
+
+    for (final key in _screenTimeDocKeys) {
+      final parsed = _parseScreenTimeMinutes(data[key]);
+      if (parsed != null) {
+        _screenTimeMinutes = parsed;
+        _screenTimeSource = 'Firestore:childDoc.$key';
+        _screenTimeRawValue = data[key];
+        return;
+      }
+    }
+
+    final profile = data['profile'];
+    if (profile is Map) {
+      final profileMap = Map<String, dynamic>.from(profile);
+      for (final key in _screenTimeDocKeys) {
+        final parsed = _parseScreenTimeMinutes(profileMap[key]);
+        if (parsed != null) {
+          _screenTimeMinutes = parsed;
+          _screenTimeSource = 'Firestore:childDoc.profile.$key';
+          _screenTimeRawValue = profileMap[key];
+          return;
+        }
+      }
+    }
+  }
+
+  String _formatScreenTimeDisplay(int? minutes) {
+    if (minutes == null) return 'אין נתונים';
+    if (minutes < 60) return '$minutes דק׳';
+    final hours = minutes ~/ 60;
+    final remainder = minutes % 60;
+    if (remainder == 0) return '$hours ש׳';
+    return '$hours ש׳ $remainder דק׳';
+  }
+
+  String get _screenTimeCardValue => _formatScreenTimeDisplay(_screenTimeMinutes);
+
+  void _logScreenTimeCardOnce() {
+    final childId =
+        normalizeIdentifier(_displayChild?.childId) ?? (_showNoChildState ? 'none' : '');
+    if (_screenTimeLogChildId == childId) return;
+    _screenTimeLogChildId = childId;
+    final formatted = _screenTimeCardValue;
+    final hasNoData = _screenTimeMinutes == null;
+    debugPrint(
+      '[GENET][SCREEN_TIME_CARD] childId=$childId source=$_screenTimeSource '
+      'rawValue=$_screenTimeRawValue formattedValue=$formatted hasNoData=$hasNoData',
+    );
+  }
+
   bool get _showNoChildState =>
       !_loading && _connectedChildren.isEmpty;
+
+  static const Map<String, String> _profileKeyLabels = {
+    'name': 'שם',
+    'firstName': 'שם פרטי',
+    'lastName': 'שם משפחה',
+    'fullName': 'שם מלא',
+    'age': 'גיל',
+    'grade': 'כיתה',
+    'class': 'כיתה',
+    'schoolName': 'בית ספר',
+    'school': 'בית ספר',
+    'schoolCode': 'קוד בית ספר',
+    'hobbies': 'תחביבים',
+    'interests': 'תחומי עניין',
+    'goals': 'מטרות',
+    'dream': 'חלום',
+    'notes': 'הערות',
+    'note': 'הערות',
+    'phone': 'טלפון',
+    'favoriteSubject': 'מקצוע אהוב',
+    'favoriteAnimal': 'חיה אהובה',
+    'favoriteFood': 'אוכל אהוב',
+    'birthDate': 'תאריך לידה',
+  };
+
+  static const Set<String> _profileKeysInHeader = {'name', 'firstName', 'lastName', 'fullName'};
+
+  void _logChildProfileCardOnce(String childId, Map<String, dynamic> data) {
+    if (_childProfileCardLogChildId == childId) return;
+    _childProfileCardLogChildId = childId;
+    final topKeys = data.keys.toList()..sort();
+    final profileRaw = data['profile'];
+    final profileKeys = profileRaw is Map
+        ? (profileRaw.keys.toList()..sort())
+        : <String>[];
+    debugPrint(
+      '[GENET][CHILD_PROFILE_CARD] childId=$childId keys=$topKeys profileKeys=$profileKeys',
+    );
+  }
+
+  String? _formatProfileValue(dynamic value) {
+    if (value == null) return null;
+    if (value is String) {
+      final trimmed = value.trim();
+      return trimmed.isEmpty ? null : trimmed;
+    }
+    if (value is num) return value.toString();
+    if (value is bool) return value ? 'כן' : 'לא';
+    if (value is DateTime) {
+      final d = value;
+      return '${d.day.toString().padLeft(2, '0')}/'
+          '${d.month.toString().padLeft(2, '0')}/'
+          '${d.year}';
+    }
+    return null;
+  }
+
+  List<_ChildProfileField> _childProfileDisplayFields() {
+    final child = _displayChild;
+    final profile = _childDocProfile;
+    final fields = <_ChildProfileField>[];
+    final usedKeys = <String>{};
+
+    void addField(String label, String? value, {String? sourceKey}) {
+      final trimmed = value?.trim();
+      if (trimmed == null || trimmed.isEmpty) return;
+      fields.add(_ChildProfileField(label: label, value: trimmed));
+      if (sourceKey != null) usedKeys.add(sourceKey);
+    }
+
+    void addFromProfileKey(String key) {
+      if (usedKeys.contains(key) || _profileKeysInHeader.contains(key)) return;
+      final label = _profileKeyLabels[key];
+      if (label == null) return;
+      addField(label, _formatProfileValue(profile[key]), sourceKey: key);
+    }
+
+    final ageRaw = profile['age'] ?? child?.age;
+    if (ageRaw is num && ageRaw > 0) {
+      addField('גיל', ageRaw.toInt().toString(), sourceKey: 'age');
+    }
+
+    addFromProfileKey('grade');
+    if (!usedKeys.contains('grade') && !usedKeys.contains('class')) {
+      final grade = _formatProfileValue(profile['class']) ??
+          (child != null && child.grade.trim().isNotEmpty ? child.grade : null);
+      if (grade != null) addField('כיתה', grade, sourceKey: 'class');
+    }
+
+    addFromProfileKey('schoolName');
+    if (!usedKeys.contains('schoolName') && !usedKeys.contains('school')) {
+      addFromProfileKey('school');
+    }
+
+    final schoolCode = _formatProfileValue(profile['schoolCode']) ??
+        (child != null && child.schoolCode.trim().isNotEmpty
+            ? child.schoolCode
+            : null);
+    if (schoolCode != null) {
+      addField('קוד בית ספר', schoolCode, sourceKey: 'schoolCode');
+    }
+
+    addFromProfileKey('hobbies');
+    if (!usedKeys.contains('hobbies') && !usedKeys.contains('interests')) {
+      addFromProfileKey('interests');
+    }
+    addFromProfileKey('goals');
+    if (!usedKeys.contains('goals') && !usedKeys.contains('dream')) {
+      addFromProfileKey('dream');
+    }
+    addFromProfileKey('notes');
+    if (!usedKeys.contains('notes')) addFromProfileKey('note');
+    addFromProfileKey('phone');
+    addFromProfileKey('favoriteSubject');
+    addFromProfileKey('favoriteAnimal');
+    addFromProfileKey('favoriteFood');
+    addFromProfileKey('birthDate');
+
+    addField('שעת שינה', _sleepBedTime);
+    addField('שעת קימה', _sleepWakeTime);
+
+    final sortedProfileKeys = profile.keys.toList()..sort();
+    for (final key in sortedProfileKeys) {
+      if (usedKeys.contains(key) || _profileKeysInHeader.contains(key)) continue;
+      addFromProfileKey(key);
+    }
+
+    return fields;
+  }
 
   Future<void> _pushExistingScreen(Widget screen, {VoidCallback? onReturn}) async {
     if (_navigationLocked || !mounted) return;
@@ -372,38 +619,38 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
   Widget build(BuildContext context) {
     final sleepValue = _sleepLockActive ? 'ON' : 'OFF';
     final blockedValue = _blockedCount.toString();
+    final screenTimeValue =
+        _showNoChildState ? 'אין נתונים' : _screenTimeCardValue;
 
     return Directionality(
       textDirection: TextDirection.rtl,
       child: SafeArea(
         top: false,
-        bottom: false,
-        child: Padding(
+        bottom: true,
+        child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(
             _DashboardTokens.horizontalPad,
             2,
             _DashboardTokens.horizontalPad,
-            4,
+            _DashboardTokens.scrollBottomPadding,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _DashboardHeader(onSettings: _openSettings),
               const SizedBox(height: 4),
-              Expanded(
-                flex: 40,
-                child: _showNoChildState
-                    ? _NoChildConnectedCard(onAddChild: _openAddChild)
-                    : _ChildStatusCard(
-                        loading: _loading,
-                        childName: _displayChild?.name ?? '',
-                        isConnected: _isConnected,
-                        deviceName: _deviceName,
-                      ),
-              ),
+              _showNoChildState
+                  ? _NoChildConnectedCard(onAddChild: _openAddChild)
+                  : _ChildStatusCard(
+                      loading: _loading,
+                      childName: _displayChild?.name ?? '',
+                      isConnected: _isConnected,
+                      deviceName: _deviceName,
+                      profileFields: _childProfileDisplayFields(),
+                    ),
               const SizedBox(height: _DashboardTokens.sectionGap),
-              Expanded(
-                flex: 16,
+              SizedBox(
+                height: _DashboardTokens.quickStatsRowHeight,
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -411,8 +658,9 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
                       child: _QuickStatCard(
                         emoji: '⏱',
                         label: 'שעות מסך',
-                        value: _screenTimeValue,
+                        value: screenTimeValue,
                         loading: _loading && !_showNoChildState,
+                        compactValue: screenTimeValue.length > 6,
                       ),
                     ),
                     const SizedBox(width: _DashboardTokens.cardGap),
@@ -439,8 +687,8 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
               const SizedBox(height: _DashboardTokens.sectionGap),
               _ManagementButton(onTap: _openChildrenManagement),
               const SizedBox(height: _DashboardTokens.sectionGap),
-              Expanded(
-                flex: 17,
+              SizedBox(
+                height: _DashboardTokens.quickActionsRowHeight,
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -578,18 +826,27 @@ class _HeaderIconButtonState extends State<_HeaderIconButton> {
   }
 }
 
+class _ChildProfileField {
+  const _ChildProfileField({required this.label, required this.value});
+
+  final String label;
+  final String value;
+}
+
 class _ChildStatusCard extends StatelessWidget {
   const _ChildStatusCard({
     required this.loading,
     required this.childName,
     required this.isConnected,
     required this.deviceName,
+    required this.profileFields,
   });
 
   final bool loading;
   final String childName;
   final bool isConnected;
   final String? deviceName;
+  final List<_ChildProfileField> profileFields;
 
   @override
   Widget build(BuildContext context) {
@@ -599,37 +856,37 @@ class _ChildStatusCard extends StatelessWidget {
     final statusLabel = isConnected ? 'מחובר' : 'לא מחובר';
 
     return _HeroDarkCard(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         mainAxisSize: MainAxisSize.min,
         children: [
           if (loading)
-            const _SkeletonBar(width: 140, height: 28)
+            const _SkeletonBar(width: 140, height: 24)
           else
             Row(
               children: [
-                const Text('👦', style: TextStyle(fontSize: 22)),
-                const SizedBox(width: 10),
+                const Text('👦', style: TextStyle(fontSize: 20)),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     childName.isNotEmpty ? childName : 'ילד',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 28,
+                      fontSize: 24,
                       fontWeight: FontWeight.bold,
                       color: Colors.white.withValues(alpha: 0.98),
-                      height: 1.1,
+                      height: 1.05,
                     ),
                   ),
                 ),
               ],
             ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           if (loading)
-            const _SkeletonBar(width: 96, height: 16)
+            const _SkeletonBar(width: 96, height: 14)
           else
             Row(
               children: [
@@ -641,7 +898,7 @@ class _ChildStatusCard extends StatelessWidget {
                 Text(
                   statusLabel,
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: 15,
                     fontWeight: FontWeight.w600,
                     color: statusColor,
                   ),
@@ -651,20 +908,94 @@ class _ChildStatusCard extends StatelessWidget {
           if (!loading &&
               deviceName != null &&
               deviceName!.trim().isNotEmpty) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Text(
               deviceName!,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: 12,
+                fontSize: 11,
                 fontWeight: FontWeight.w500,
                 color: Colors.white.withValues(alpha: 0.48),
               ),
             ),
           ],
+          if (!loading) ...[
+            const SizedBox(height: 10),
+            Divider(
+              height: 1,
+              color: Colors.white.withValues(alpha: 0.12),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'פרופיל הילד',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.3,
+                color: Colors.white.withValues(alpha: 0.55),
+              ),
+            ),
+            const SizedBox(height: 6),
+            if (profileFields.isEmpty)
+              Text(
+                'טרם הושלמו פרטי הילד',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  height: 1.35,
+                  color: Colors.white.withValues(alpha: 0.42),
+                ),
+              )
+            else
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < profileFields.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 4),
+                    _ChildProfileDetailRow(field: profileFields[i]),
+                  ],
+                ],
+              ),
+          ],
         ],
       ),
+    );
+  }
+}
+
+class _ChildProfileDetailRow extends StatelessWidget {
+  const _ChildProfileDetailRow({required this.field});
+
+  final _ChildProfileField field;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${field.label}: ',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            height: 1.35,
+            color: Colors.white.withValues(alpha: 0.5),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            field.value,
+            softWrap: true,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              height: 1.35,
+              color: Colors.white.withValues(alpha: 0.88),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -704,36 +1035,36 @@ class _NoChildConnectedCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _HeroDarkCard(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('👦', style: TextStyle(fontSize: 22)),
-          const SizedBox(height: 10),
+          const Text('👦', style: TextStyle(fontSize: 20)),
+          const SizedBox(height: 6),
           Text(
             'לא מחובר ילד',
             style: TextStyle(
-              fontSize: 28,
+              fontSize: 24,
               fontWeight: FontWeight.bold,
               color: Colors.white.withValues(alpha: 0.96),
-              height: 1.1,
+              height: 1.05,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text(
             'הוסף ילד כדי להתחיל',
             style: TextStyle(
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w500,
               color: Colors.white.withValues(alpha: 0.52),
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
           SizedBox(
             width: double.infinity,
-            height: 44,
+            height: 42,
             child: _PrimaryOutlineButton(
               label: 'הוסף ילד',
               onTap: onAddChild,
@@ -770,12 +1101,14 @@ class _QuickStatCard extends StatelessWidget {
     required this.label,
     required this.value,
     this.loading = false,
+    this.compactValue = false,
   });
 
   final String emoji;
   final String label;
   final String value;
   final bool loading;
+  final bool compactValue;
 
   @override
   Widget build(BuildContext context) {
@@ -788,13 +1121,18 @@ class _QuickStatCard extends StatelessWidget {
           if (loading)
             const _SkeletonBar(width: 48, height: 22)
           else
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 26,
-                fontWeight: FontWeight.w800,
-                color: Colors.white.withValues(alpha: 0.97),
-                height: 1,
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                value,
+                maxLines: 1,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: compactValue ? 18 : 26,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white.withValues(alpha: 0.97),
+                  height: 1,
+                ),
               ),
             ),
           const SizedBox(height: 4),
@@ -1013,7 +1351,6 @@ class _HeroDarkCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      height: double.infinity,
       padding: padding,
       decoration: _DashboardTokens.heroPanelDecoration(),
       child: child,
