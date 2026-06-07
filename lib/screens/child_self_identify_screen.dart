@@ -50,9 +50,13 @@ class _ChildSelfIdentifyScreenState extends State<ChildSelfIdentifyScreen> {
     debugPrint('[GENET][PROFILE] child_profile_saved');
     if (!mounted) return;
     debugPrint('[GENET][ONBOARDING] child_profile_completed');
+    debugPrint(
+      '[GENET][CHILD_ONBOARDING] profile completed - opening link screen',
+    );
+    if (!mounted) return;
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (_) => const ChildLinkScreen()),
+      MaterialPageRoute<void>(builder: (_) => const ChildLinkScreen()),
     );
   }
 

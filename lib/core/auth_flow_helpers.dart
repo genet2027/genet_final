@@ -93,6 +93,30 @@ Future<void> completePostAuthNavigation(
     );
   }
 
+  Future<void> routeChildOnboarding() async {
+    final verified = await hasVerifiedChildCanonicalConnection();
+    if (!context.mounted) return;
+    if (verified) {
+      debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ChildHomeScreen');
+      go(const ChildHomeScreen());
+      return;
+    }
+
+    final hasProfile = await isChildProfileComplete();
+    if (!context.mounted) return;
+    debugPrint(
+      '[GENET][ONBOARDING_FLOW] hasCompletedProfile=$hasProfile',
+    );
+    if (!hasProfile) {
+      debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ChildSelfIdentifyScreen');
+      go(const ChildSelfIdentifyScreen());
+      return;
+    }
+
+    debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ChildLinkScreen');
+    go(const ChildLinkScreen());
+  }
+
   if (role == kUserRoleParent) {
     debugPrint('[GENET][AUTH_ROUTE] navigating parent flow');
     if (isLoginMode) {
@@ -123,32 +147,8 @@ Future<void> completePostAuthNavigation(
   }
   if (role == kUserRoleChild) {
     debugPrint('[GENET][AUTH_ROUTE] navigating child flow');
-    if (isLoginMode) {
-      final verified = await hasVerifiedChildCanonicalConnection();
-      if (!context.mounted) return;
-      if (verified) {
-        debugPrint('[GENET][ONBOARDING_FLOW] hasCompletedProfile=true');
-        debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ChildHomeScreen');
-        go(const ChildHomeScreen());
-        return;
-      }
-      final hasProfile = await isChildProfileComplete();
-      if (!context.mounted) return;
-      debugPrint(
-        '[GENET][ONBOARDING_FLOW] hasCompletedProfile=$hasProfile',
-      );
-      if (hasProfile) {
-        debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ChildLinkScreen');
-        go(const ChildLinkScreen());
-        return;
-      }
-      debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ChildSelfIdentifyScreen');
-      go(const ChildSelfIdentifyScreen());
-      return;
-    }
-    debugPrint('[GENET][ONBOARDING_FLOW] hasCompletedProfile=false');
-    debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ChildLinkScreen');
-    go(const ChildLinkScreen());
+    await routeChildOnboarding();
+    return;
   }
 }
 

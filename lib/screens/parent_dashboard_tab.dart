@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'parent/widgets/child_questionnaire_card.dart';
 import '../core/config/genet_config.dart';
 import '../models/child_entity.dart';
 import '../repositories/children_repository.dart';
@@ -78,6 +79,7 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
   bool _sleepLockActive = false;
   String? _genetPackageName;
   Map<String, dynamic> _childDocProfile = const {};
+  Map<String, dynamic> _childLinkDocSnapshot = const {};
   String? _sleepBedTime;
   String? _sleepWakeTime;
   String? _childProfileCardLogChildId;
@@ -95,6 +97,8 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
   String _screenTimeSource = 'none';
   Object? _screenTimeRawValue;
   String? _screenTimeLogChildId;
+
+  String? _questionnaireDebugDashboardLogKey;
 
   static const List<String> _screenTimeDocKeys = [
     'screenTimeMinutes',
@@ -176,11 +180,64 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
     _displayChild = child;
     _isConnected = isConnected;
 
+    _logQuestionnaireDebugDashboard(child);
+
     if (child != null && isConnected) {
       debugPrint(
         '[GENET][PARENT_DASHBOARD] Child Loaded childId=${child.childId} name=${child.name}',
       );
     }
+  }
+
+  void _logQuestionnaireDebugDashboard(
+    ChildEntity? child, {
+    Map<String, dynamic>? docData,
+  }) {
+    final childId = child?.childId;
+    final questionnaireChildId =
+        child?.questionnaireChildId ?? child?.childId;
+    final logKey = '$childId|$questionnaireChildId';
+    if (_questionnaireDebugDashboardLogKey == logKey) return;
+    _questionnaireDebugDashboardLogKey = logKey;
+
+    final binding = childId != null && childId.isNotEmpty
+        ? resolveQuestionnaireChildIdBinding(
+            docId: childId,
+            docData: docData,
+          )
+        : null;
+    final source = child?.questionnaireChildId != null
+        ? (binding?.source ?? 'docId')
+        : 'fallback';
+
+    debugPrint(
+      '[GENET][QUESTIONNAIRE_DEBUG][DASHBOARD] displayChild.childId=$childId',
+    );
+    debugPrint(
+      '[GENET][QUESTIONNAIRE_DEBUG][DASHBOARD] displayChild.name=${child?.name}',
+    );
+    debugPrint(
+      '[GENET][QUESTIONNAIRE_DEBUG][DASHBOARD] parentId=$_parentId',
+    );
+    debugPrint(
+      '[GENET][QUESTIONNAIRE_BINDING] parent child docId: $childId',
+    );
+    debugPrint(
+      '[GENET][QUESTIONNAIRE_BINDING] resolved questionnaireChildId: $questionnaireChildId',
+    );
+    debugPrint(
+      '[GENET][QUESTIONNAIRE_BINDING] source: $source',
+    );
+    if (childId != null && isLegacyRandomChildId(childId)) {
+      debugPrint(
+        '[GENET][QUESTIONNAIRE_BINDING] legacy link docId detected: $childId',
+      );
+    }
+  }
+
+  String? _questionnaireChildIdForCard(ChildEntity? child) {
+    if (child == null) return null;
+    return child.questionnaireChildId ?? child.childId;
   }
 
   ChildEntity? _findChildById(String childId) {
@@ -208,6 +265,7 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
       _blockedCount = 0;
       _sleepLockActive = false;
       _childDocProfile = const {};
+      _childLinkDocSnapshot = const {};
       _sleepBedTime = null;
       _sleepWakeTime = null;
       _screenTimeMinutes = null;
@@ -236,13 +294,29 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
         _deviceName = device;
         _blockedCount = blocked;
         _childDocProfile = profile;
+        _childLinkDocSnapshot = snapshot;
         if (data != null) {
           final status = data['connectionStatus'] as String?;
           _isConnected = isConnectionStatusConnected(status);
         }
+        if (_displayChild?.childId == childId) {
+          final binding = resolveQuestionnaireChildIdBinding(
+            docId: childId,
+            docData: snapshot.isEmpty ? null : snapshot,
+          );
+          if (binding.questionnaireChildId != null) {
+            _displayChild = _displayChild!.copyWith(
+              questionnaireChildId: binding.questionnaireChildId,
+            );
+          }
+        }
       });
       _logChildProfileCardOnce(childId, snapshot);
       _logScreenTimeCardOnce();
+      _logQuestionnaireDebugDashboard(
+        _displayChild,
+        docData: snapshot.isEmpty ? null : snapshot,
+      );
       if (!_childDocReady) {
         _childDocReady = true;
         debugPrint(
@@ -518,45 +592,6 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
     return fields;
   }
 
-  List<_ChildProfileField> _knowYourChildPreviewFields() {
-    final profile = _childDocProfile;
-    final previews = <_ChildProfileField>[];
-
-    void tryAdd(String key, String label) {
-      if (previews.length >= 3) return;
-      final value = _formatProfileValue(profile[key]);
-      if (value == null) return;
-      previews.add(_ChildProfileField(label: label, value: value));
-    }
-
-    tryAdd('favoriteAnimal', 'חיה אהובה');
-    tryAdd('favoriteFood', 'אוכל אהוב');
-    if (previews.length < 3) {
-      final hobbies = _formatProfileValue(profile['hobbies']) ??
-          _formatProfileValue(profile['interests']);
-      if (hobbies != null) {
-        previews.add(_ChildProfileField(label: 'תחביבים', value: hobbies));
-      }
-    }
-
-    return previews;
-  }
-
-  void _openKnowYourChildSheet() {
-    final fields = _childProfileDisplayFields();
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) {
-        return Directionality(
-          textDirection: TextDirection.rtl,
-          child: _KnowYourChildSheet(fields: fields),
-        );
-      },
-    );
-  }
-
   Future<void> _pushExistingScreen(Widget screen, {VoidCallback? onReturn}) async {
     if (_navigationLocked || !mounted) return;
     _navigationLocked = true;
@@ -759,14 +794,14 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
               ),
               const SizedBox(height: _DashboardTokens.sectionGap),
               _MessageLaunchCard(onTap: _openMessagesScreen),
-              if (!_showNoChildState) ...[
-                const SizedBox(height: _DashboardTokens.sectionGap),
-                _KnowYourChildCard(
-                  loading: _loading,
-                  previewFields: _knowYourChildPreviewFields(),
-                  onTap: _openKnowYourChildSheet,
-                ),
-              ],
+              const SizedBox(height: _DashboardTokens.sectionGap),
+              ChildQuestionnaireCard(
+                childId: _questionnaireChildIdForCard(_displayChild),
+                linkChildId: _displayChild?.childId,
+                parentChildLinkDocData: _childLinkDocSnapshot.isEmpty
+                    ? null
+                    : _childLinkDocSnapshot,
+              ),
             ],
           ),
         ),
@@ -1291,245 +1326,6 @@ class _QuickActionCard extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _KnowYourChildCard extends StatelessWidget {
-  const _KnowYourChildCard({
-    required this.loading,
-    required this.previewFields,
-    required this.onTap,
-  });
-
-  final bool loading;
-  final List<_ChildProfileField> previewFields;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return _DashboardTapTarget(
-      onTap: onTap,
-      borderRadius: _DashboardTokens.cardRadiusBR,
-      child: Container(
-        decoration: _DashboardTokens.panelDecoration(),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'הכר את הילד שלך',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white.withValues(alpha: 0.95),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'גלה מה הילד אוהב, מה מרגיע אותו ומה חשוב לו',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                          height: 1.3,
-                          color: Colors.white.withValues(alpha: 0.48),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(
-                  Icons.chevron_left_rounded,
-                  color: Colors.white.withValues(alpha: 0.35),
-                  size: 18,
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            if (loading)
-              const _SkeletonBar(width: double.infinity, height: 36)
-            else if (previewFields.isEmpty)
-              Text(
-                'עדיין אין מספיק פרטים מהשאלון',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  height: 1.35,
-                  color: Colors.white.withValues(alpha: 0.42),
-                ),
-              )
-            else
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (var i = 0; i < previewFields.length; i++) ...[
-                    if (i > 0) const SizedBox(height: 4),
-                    Text(
-                      '${previewFields[i].label}: ${previewFields[i].value}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.white.withValues(alpha: 0.78),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _KnowYourChildSheet extends StatelessWidget {
-  const _KnowYourChildSheet({required this.fields});
-
-  final List<_ChildProfileField> fields;
-
-  @override
-  Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.paddingOf(context).bottom;
-
-    return Padding(
-      padding: EdgeInsets.only(
-        top: MediaQuery.paddingOf(context).top * 0.15,
-      ),
-      child: DraggableScrollableSheet(
-        initialChildSize: 0.72,
-        minChildSize: 0.45,
-        maxChildSize: 0.92,
-        expand: false,
-        builder: (context, scrollController) {
-          return Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFF061224),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-              border: Border.all(
-                color: _DashboardTokens.fieldBorder,
-                width: 1,
-              ),
-            ),
-            child: Column(
-              children: [
-                const SizedBox(height: 10),
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.22),
-                    borderRadius: BorderRadius.circular(99),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'הכר את הילד שלך',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white.withValues(alpha: 0.97),
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: () => Navigator.pop(context),
-                        icon: Icon(
-                          Icons.close_rounded,
-                          color: Colors.white.withValues(alpha: 0.55),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: fields.isEmpty
-                      ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: Text(
-                              'עדיין אין מספיק פרטים מהשאלון',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w500,
-                                height: 1.4,
-                                color: Colors.white.withValues(alpha: 0.45),
-                              ),
-                            ),
-                          ),
-                        )
-                      : ListView.separated(
-                          controller: scrollController,
-                          padding: EdgeInsets.fromLTRB(20, 4, 20, 16 + bottomInset),
-                          itemCount: fields.length,
-                          separatorBuilder: (context, _) =>
-                              const SizedBox(height: 14),
-                          itemBuilder: (context, index) {
-                            final field = fields[index];
-                            return _KnowYourChildSheetRow(field: field);
-                          },
-                        ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _KnowYourChildSheetRow extends StatelessWidget {
-  const _KnowYourChildSheetRow({required this.field});
-
-  final _ChildProfileField field;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: _DashboardTokens.fieldFill,
-        borderRadius: _DashboardTokens.cardRadiusBR,
-        border: Border.all(color: _DashboardTokens.fieldBorder, width: 1),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            field.label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: Colors.white.withValues(alpha: 0.5),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            field.value,
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              height: 1.35,
-              color: Colors.white.withValues(alpha: 0.92),
-            ),
-          ),
-        ],
       ),
     );
   }

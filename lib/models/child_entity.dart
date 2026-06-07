@@ -18,6 +18,7 @@ class ChildEntity {
     required this.linkCode,
     this.isConnected = true,
     this.connectionStatus = ChildConnectionStatus.connected,
+    this.questionnaireChildId,
   });
 
   final String childId;
@@ -30,6 +31,8 @@ class ChildEntity {
   final String linkCode;
   final bool isConnected;
   final String connectionStatus;
+  /// Auth-bound id for questionnaire reads (`c_<firebaseUid>`), when known.
+  final String? questionnaireChildId;
 
   /// Display label for connection status (Hebrew).
   String get connectionStatusLabel {
@@ -56,6 +59,8 @@ class ChildEntity {
         'linkCode': linkCode,
         'isConnected': isConnected,
         'connectionStatus': connectionStatus,
+        if (questionnaireChildId != null)
+          'questionnaireChildId': questionnaireChildId,
       };
 
   static ChildEntity fromJson(Map<String, dynamic> json) {
@@ -72,6 +77,7 @@ class ChildEntity {
       linkCode: json['linkCode'] as String? ?? '',
       isConnected: isConn,
       connectionStatus: status,
+      questionnaireChildId: json['questionnaireChildId'] as String?,
     );
   }
 
@@ -86,6 +92,7 @@ class ChildEntity {
     String? linkCode,
     bool? isConnected,
     String? connectionStatus,
+    String? questionnaireChildId,
   }) {
     return ChildEntity(
       childId: childId ?? this.childId,
@@ -98,6 +105,7 @@ class ChildEntity {
       linkCode: linkCode ?? this.linkCode,
       isConnected: isConnected ?? this.isConnected,
       connectionStatus: connectionStatus ?? this.connectionStatus,
+      questionnaireChildId: questionnaireChildId ?? this.questionnaireChildId,
     );
   }
 }

@@ -56,6 +56,98 @@ bool isLegacyRandomChildId(String id) {
   return RegExp(r'^c_\d+_\d+$').hasMatch(id.trim());
 }
 
+/// Auth-bound child id for pairing/questionnaire: `c_<firebaseUid>`.
+/// Uses any signed-in Firebase user (including during onboarding).
+String? resolveAuthBoundChildIdFromAuth() {
+  if (!firebaseUserExists()) return null;
+  final uid = requireFirebaseUser().uid.trim();
+  if (uid.isEmpty) return null;
+  return uid.startsWith('c_') ? uid : 'c_$uid';
+}
+
+/// Persists canonical child id locally (linked + local identity keys).
+Future<void> persistAuthBoundLocalChildId(String childId) async {
+  final id = childId.trim();
+  if (id.isEmpty) return;
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(_kLocalChildIdKey, id);
+}
+
+const List<String> _parentChildAuthUidKeys = [
+  'childAuthUid',
+  'authUid',
+  'firebaseUid',
+  'uid',
+  'childUid',
+];
+
+/// Reads a child Firebase uid from a parent canonical child doc map.
+String? extractChildAuthUidFromParentChildDoc(Map<String, dynamic>? data) {
+  if (data == null) return null;
+
+  String? readKey(Map<String, dynamic> map, String key) {
+    final raw = map[key];
+    if (raw == null) return null;
+    final value = raw.toString().trim();
+    return value.isEmpty ? null : value;
+  }
+
+  for (final key in _parentChildAuthUidKeys) {
+    final value = readKey(data, key);
+    if (value != null) return value;
+  }
+
+  final profile = data['profile'];
+  if (profile is Map) {
+    final profileMap = Map<String, dynamic>.from(profile);
+    for (final key in _parentChildAuthUidKeys) {
+      final value = readKey(profileMap, key);
+      if (value != null) return value;
+    }
+  }
+
+  return null;
+}
+
+class QuestionnaireChildIdBinding {
+  const QuestionnaireChildIdBinding({
+    required this.questionnaireChildId,
+    required this.source,
+  });
+
+  final String? questionnaireChildId;
+  final String source;
+}
+
+/// Resolves questionnaire doc id from parent child doc id + optional auth uid fields.
+QuestionnaireChildIdBinding resolveQuestionnaireChildIdBinding({
+  required String docId,
+  Map<String, dynamic>? docData,
+}) {
+  final authUid = extractChildAuthUidFromParentChildDoc(docData);
+  if (authUid != null) {
+    final resolved =
+        authUid.startsWith('c_') ? authUid : 'c_$authUid';
+    return QuestionnaireChildIdBinding(
+      questionnaireChildId: resolved,
+      source: 'authUid',
+    );
+  }
+
+  final id = docId.trim();
+  if (id.isNotEmpty && !isLegacyRandomChildId(id)) {
+    return QuestionnaireChildIdBinding(
+      questionnaireChildId: id,
+      source: 'docId',
+    );
+  }
+
+  return QuestionnaireChildIdBinding(
+    questionnaireChildId: id.isEmpty ? null : id,
+    source: 'fallback',
+  );
+}
+
 /// Parent: list of children.
 Future<List<ChildEntity>> getChildren() async {
   final prefs = await SharedPreferences.getInstance();

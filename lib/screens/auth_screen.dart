@@ -12,7 +12,6 @@ import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../repositories/parent_profile_repository.dart';
 import '../theme/app_theme.dart';
-import 'child_link_screen.dart';
 import 'parent_shell.dart';
 import 'welcome_screen.dart';
 
@@ -428,9 +427,10 @@ class _AuthScreenState extends State<AuthScreen> {
       );
       return;
     }
-    Navigator.pushReplacement(
+    await completePostAuthNavigation(
       context,
-      MaterialPageRoute<void>(builder: (_) => const ChildLinkScreen()),
+      role: kUserRoleChild,
+      isLoginMode: false,
     );
   }
 

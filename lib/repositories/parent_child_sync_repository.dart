@@ -1348,6 +1348,19 @@ Stream<List<ChildEntity>> watchParentChildrenStream(String parentId) async* {
       final firstName = profile[_kFirstName] as String? ?? '';
       final lastName = profile[_kLastName] as String? ?? '';
       final linkCode = data[_kLinkCode] as String? ?? '';
+      final questionnaireBinding = resolveQuestionnaireChildIdBinding(
+        docId: childId,
+        docData: data,
+      );
+      debugPrint(
+        '[GENET][QUESTIONNAIRE_BINDING] parent child docId: $childId',
+      );
+      debugPrint(
+        '[GENET][QUESTIONNAIRE_BINDING] resolved questionnaireChildId: ${questionnaireBinding.questionnaireChildId}',
+      );
+      debugPrint(
+        '[GENET][QUESTIONNAIRE_BINDING] source: ${questionnaireBinding.source}',
+      );
       list.add(ChildEntity(
         childId: childId,
         name: name.isEmpty ? [firstName, lastName].join(' ').trim() : name,
@@ -1358,6 +1371,7 @@ Stream<List<ChildEntity>> watchParentChildrenStream(String parentId) async* {
         linkCode: linkCode,
         isConnected: true,
         connectionStatus: ChildConnectionStatus.connected,
+        questionnaireChildId: questionnaireBinding.questionnaireChildId,
       ));
     }
     developer.log('PARENT_READ_QUERY_RESULT_COUNT = ${list.length}', name: 'Sync');

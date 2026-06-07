@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:math' as math;
 import 'dart:io' show Platform;
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -18,6 +20,8 @@ import '../repositories/children_repository.dart';
 import '../repositories/parent_child_sync_repository.dart';
 import '../repositories/pending_link_repository.dart';
 import '../services/relevant_installed_apps_engine.dart';
+import '../features/child_questionnaire/child_questionnaire_repository.dart';
+import 'child/child_questionnaire_screen.dart';
 import 'child_home_screen.dart';
 
 enum _LinkView { qr, manual, success, error }
@@ -395,14 +399,33 @@ class _ChildLinkScreenState extends State<ChildLinkScreen>
     final lastName = profile[kChildSelfProfileLastName] as String? ?? '';
     final age = (profile[kChildSelfProfileAge] as num?)?.toInt() ?? 0;
     final schoolCode = profile[kChildSelfProfileSchoolCode] as String? ?? '';
-    final childId = await getLocalChildId();
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final childId = (uid == null || uid.trim().isEmpty)
+        ? null
+        : (uid.trim().startsWith('c_') ? uid.trim() : 'c_${uid.trim()}');
+    debugPrint('[GENET][QR_FIX] auth uid: $uid');
+    debugPrint('[GENET][QR_FIX] canonical childId for link: $childId');
     if (childId == null || childId.isEmpty) {
       debugPrint('[GENET][PAIRING] child_requires_authenticated_user');
-      setState(() => _error = kDebugMode
-          ? 'child_requires_authenticated_user (missing auth-bound childId)'
-          : 'לא ניתן לזהות את מכשיר הילד. נסה שוב.');
+      if (mounted) {
+        if (_view == _LinkView.qr) {
+          _showFullScreenError(_ConnectionErrorKind.invalidQr);
+        } else {
+          setState(() {
+            _linking = false;
+            _error = kDebugMode
+                ? 'child_requires_authenticated_user (missing auth-bound childId)'
+                : 'לא ניתן לזהות את מכשיר הילד. נסה שוב.';
+          });
+        }
+      }
       return;
     }
+    debugPrint('[GENET][PAIRING_FIX] auth uid: $uid');
+    debugPrint(
+      '[GENET][PAIRING_FIX] canonical childId used for QR link: $childId',
+    );
+    await persistAuthBoundLocalChildId(childId);
     final name = [firstName, lastName].join(' ').trim();
     String? attemptParentId;
     String? attemptChildId;
@@ -435,6 +458,9 @@ class _ChildLinkScreenState extends State<ChildLinkScreen>
       attemptChildId = childId;
       attemptLinkCode = code;
       final childDocPath = 'genet_parents/$parentId/children/$childId';
+      debugPrint(
+        '[GENET][PAIRING_FIX] canonical parent child path: $childDocPath',
+      );
       developer.log('CHILD_DOC_ID = $childId', name: 'Sync');
       developer.log('CHILD_DOC_PATH = $childDocPath', name: 'Sync');
       developer.log('CHILD_DOC_BEFORE_CONNECT = $childDocPath (will write parentId + connected)', name: 'Sync');
@@ -479,6 +505,19 @@ class _ChildLinkScreenState extends State<ChildLinkScreen>
       }
       if (!mounted) return;
       debugPrint('[GENET][PAIRING] child_link_prefs_saved_after_canonical');
+      final canonicalData = await readCanonicalChildData(parentId, childId);
+      debugPrint(
+        '[GENET][QUESTIONNAIRE_DEBUG][LINK] parentId=$parentId',
+      );
+      debugPrint(
+        '[GENET][QUESTIONNAIRE_DEBUG][LINK] childIdWrittenToCanonical=$childId',
+      );
+      debugPrint(
+        '[GENET][QUESTIONNAIRE_DEBUG][LINK] canonicalPath=genet_parents/$parentId/children/$childId',
+      );
+      debugPrint(
+        '[GENET][QUESTIONNAIRE_DEBUG][LINK] canonicalData=$canonicalData',
+      );
       await setLinkedParentId(parentId);
       await setLinkedChild(
         childId,
@@ -527,6 +566,13 @@ class _ChildLinkScreenState extends State<ChildLinkScreen>
               : 'שגיאה בחיבור. נסה שוב.';
         });
       }
+    } finally {
+      if (mounted &&
+          _linking &&
+          !_successHandled &&
+          _view != _LinkView.success) {
+        setState(() => _linking = false);
+      }
     }
   }
 
@@ -547,8 +593,35 @@ class _ChildLinkScreenState extends State<ChildLinkScreen>
     if (!mounted || _navigatingAway) return;
 
     _navigatingAway = true;
+    final childId = await resolveAuthBoundChildQuestionnaireId();
+    final questionnaireCompleted = childId != null
+        ? await isChildQuestionnaireCompleted(childId)
+        : false;
+    if (!mounted) return;
+
+    if (questionnaireCompleted) {
+      debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ChildHomeScreen');
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(builder: (_) => const ChildHomeScreen()),
+        (route) => false,
+      );
+      return;
+    }
+
+    debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ChildQuestionnaireScreen');
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute<void>(builder: (_) => const ChildHomeScreen()),
+      MaterialPageRoute<void>(
+        builder: (ctx) => ChildQuestionnaireScreen(
+          onCompleted: () {
+            if (!ctx.mounted) return;
+            debugPrint('[GENET][ONBOARDING_FLOW] nextRoute=ChildHomeScreen');
+            Navigator.pushReplacement(
+              ctx,
+              MaterialPageRoute<void>(builder: (_) => const ChildHomeScreen()),
+            );
+          },
+        ),
+      ),
       (route) => false,
     );
   }
@@ -563,24 +636,42 @@ class _ChildLinkScreenState extends State<ChildLinkScreen>
     await _connectWithCode(input);
   }
 
-  void _onQrDetected(String raw) {
-    if (_successHandled || _navigatingAway || _linking) return;
-
-    String code = raw.trim();
-    if (code.length == 4 && int.tryParse(code) != null) {
-      _connectWithCode(code);
-      return;
+  String? _parseLinkCodeFromQrPayload(String payload) {
+    final trimmed = payload.trim();
+    if (trimmed.length == 4 && int.tryParse(trimmed) != null) {
+      return trimmed;
     }
     try {
-      final map = jsonDecode(raw) as Map<String, dynamic>;
-      code = (map['k'] ?? map['code'] ?? '').toString().trim();
+      final map = jsonDecode(trimmed) as Map<String, dynamic>;
+      final code = (map['k'] ??
+              map['code'] ??
+              map['linkCode'] ??
+              '')
+          .toString()
+          .trim();
       if (code.length == 4 && int.tryParse(code) != null) {
-        _connectWithCode(code);
-        return;
+        return code;
       }
     } catch (_) {}
+    return null;
+  }
 
-    _showFullScreenError(_ConnectionErrorKind.invalidQr);
+  void _onQrDetected(String raw, {String? displayValue}) {
+    if (_successHandled || _navigatingAway || _linking) return;
+
+    debugPrint('[GENET][QR_FIX] raw qr value: $raw');
+    debugPrint('[GENET][QR_FIX] display qr value: $displayValue');
+
+    final linkCode = _parseLinkCodeFromQrPayload(raw);
+    debugPrint('[GENET][QR_FIX] parsed linkCode: $linkCode');
+
+    if (linkCode == null) {
+      _showFullScreenError(_ConnectionErrorKind.invalidQr);
+      return;
+    }
+
+    debugPrint('[GENET][QR_FIX] calling _connectWithCode');
+    unawaited(_connectWithCode(linkCode));
   }
 
   @override
@@ -757,13 +848,17 @@ class _ChildLinkScreenState extends State<ChildLinkScreen>
               borderRadius: BorderRadius.circular(18),
               child: MobileScanner(
                 onDetect: (capture) {
+                  if (_successHandled || _navigatingAway || _linking) return;
                   final barcodes = capture.barcodes;
                   for (final b in barcodes) {
                     final raw = b.rawValue;
-                    if (raw != null && raw.isNotEmpty) {
-                      _onQrDetected(raw);
-                      return;
-                    }
+                    final display = b.displayValue;
+                    final payload = (raw != null && raw.isNotEmpty)
+                        ? raw
+                        : display;
+                    if (payload == null || payload.isEmpty) continue;
+                    _onQrDetected(payload, displayValue: display);
+                    return;
                   }
                 },
               ),

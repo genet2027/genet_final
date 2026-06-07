@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../theme/app_theme.dart';
-import 'child_questionnaire_screen.dart';
+import '../child_link_screen.dart';
 
 /// Child onboarding: shows one random wellness fact before the next step.
 class DidYouKnowScreen extends StatefulWidget {
@@ -60,7 +60,7 @@ class _DidYouKnowScreenState extends State<DidYouKnowScreen>
     Navigator.push(
       context,
       MaterialPageRoute<void>(
-        builder: (_) => const ChildQuestionnaireScreen(),
+        builder: (_) => const ChildLinkScreen(),
       ),
     );
   }
