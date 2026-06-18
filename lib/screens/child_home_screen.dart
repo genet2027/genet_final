@@ -1551,13 +1551,538 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
     );
   }
 
+  String _headerGreetingName() {
+    final raw = _linkedNameForDisplay?.trim();
+    if (raw == null || raw.isEmpty) return 'שלום';
+    final first = raw.split(RegExp(r'\s+')).first.trim();
+    return first.isEmpty ? 'שלום' : first;
+  }
+
+  Widget _buildStar({
+    required double size,
+    required double opacity,
+    bool useBlueTint = false,
+  }) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: useBlueTint
+            ? Colors.blueAccent.withValues(alpha: opacity)
+            : Colors.white.withValues(alpha: opacity),
+      ),
+    );
+  }
+
+  Widget _buildGenetShield() {
+    return Container(
+      width: 48,
+      height: 48,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: const Color(0xFF071A3A).withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xFF1D8CFF).withValues(alpha: 0.55),
+          width: 1.2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF1D8CFF).withValues(alpha: 0.28),
+            blurRadius: 16,
+            spreadRadius: 0,
+          ),
+          BoxShadow(
+            color: const Color(0xFF36F36B).withValues(alpha: 0.08),
+            blurRadius: 8,
+          ),
+        ],
+      ),
+      child: Icon(
+        Icons.shield_rounded,
+        color: Colors.white.withValues(alpha: 0.92),
+        size: 24,
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    final greetingName = _headerGreetingName();
+
+    return Row(
+      textDirection: TextDirection.rtl,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'היי, $greetingName 👋',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 28,
+                  fontWeight: FontWeight.w800,
+                  height: 1.2,
+                  letterSpacing: -0.2,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'שמח לראות אותך',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.7),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                  height: 1.35,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 14),
+        _buildGenetShield(),
+      ],
+    );
+  }
+
+  Widget _buildNightSkyLayer({required double width, required double height}) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color(0xFF031A3F),
+                Color(0xFF020B1F),
+                Color(0xFF010715),
+              ],
+              stops: [0.0, 0.55, 1.0],
+            ),
+          ),
+        ),
+        ..._ChildHomeStarField.stars.map(
+          (star) => Positioned(
+            left: star.x * width,
+            top: star.y * height,
+            child: _buildStar(
+              size: star.size,
+              opacity: star.opacity,
+              useBlueTint: star.useBlueTint,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _resolveBedtimeDisplay(NightModeService night) {
+    if (!night.isLoaded) return '21:30';
+    final raw = night.config.startTime.trim();
+    if (raw.isEmpty) return '21:30';
+    final parts = raw.split(':');
+    if (parts.length < 2) return '21:30';
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    if (hour == null || minute == null) return '21:30';
+    return '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
+  }
+
+  Widget _buildNightStatusCard(NightModeService night) {
+    final bedtime = _resolveBedtimeDisplay(night);
+
+    return Container(
+      width: double.infinity,
+      height: 200,
+      decoration: _ChildHomeUiTokens.surfaceDecoration(
+        borderRadius: BorderRadius.circular(28),
+        gradient: const LinearGradient(
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
+          colors: [
+            Color(0xFF0B2556),
+            Color(0xFF071A3A),
+          ],
+        ),
+      ),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned(
+            top: 18,
+            left: 22,
+            child: _buildStar(size: 2.5, opacity: 0.45),
+          ),
+          Positioned(
+            top: 28,
+            left: 34,
+            child: _buildStar(size: 2.0, opacity: 0.32, useBlueTint: true),
+          ),
+          Positioned(
+            top: 16,
+            left: 46,
+            child: _buildStar(size: 3.0, opacity: 0.38),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(22, 20, 22, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    Icon(
+                      Icons.nightlight_round,
+                      color: Colors.white.withValues(alpha: 0.92),
+                      size: 30,
+                    ),
+                    const SizedBox(width: 10),
+                    const Text(
+                      'מצב הלילה',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        height: 1.2,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  bedtime,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 44,
+                    fontWeight: FontWeight.w800,
+                    height: 1.05,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'שעת השינה שלך להיום',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.72),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    height: 1.35,
+                  ),
+                ),
+                const Spacer(),
+                const Text(
+                  'עוד מעט מתחילים להירגע',
+                  style: TextStyle(
+                    color: Color(0xFF36F36B),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildParentMessageCard() {
+    final message = _parentMessage;
+    final hasMessage = message != null && message.hasContent;
+    final bodyText = hasMessage
+        ? message.body
+        : 'כאן תופיע הודעה אישית מההורה';
+
+    return Container(
+      width: double.infinity,
+      height: 135,
+      decoration: _ChildHomeUiTokens.surfaceDecoration(),
+      child: Stack(
+        children: [
+          Positioned(
+            top: 14,
+            left: 16,
+            child: Icon(
+              Icons.auto_awesome_rounded,
+              size: 18,
+              color: Colors.white.withValues(alpha: 0.22),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    const Icon(
+                      Icons.favorite_rounded,
+                      color: Color(0xFF36F36B),
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'הודעה מההורה',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        height: 1.2,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    bodyText,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.right,
+                    textDirection: naturalTextDirectionFor(bodyText),
+                    style: TextStyle(
+                      color: hasMessage
+                          ? Colors.white
+                          : Colors.white.withValues(alpha: 0.7),
+                      fontSize: hasMessage ? 17 : 15,
+                      fontWeight:
+                          hasMessage ? FontWeight.w600 : FontWeight.w500,
+                      height: 1.45,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openContentLibrary() {
+    debugPrint('[GENET][CHILD_HOME] Genet Library tapped');
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => const ContentLibraryScreen(),
+      ),
+    );
+  }
+
+  void _openBlockedAppsTimes() {
+    debugPrint('[GENET][CHILD_HOME] Apps tapped');
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => const BlockedAppsTimesScreen(),
+      ),
+    );
+  }
+
+  void _openSchoolSchedule() {
+    debugPrint('[GENET][CHILD_HOME] Sleep tapped');
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => const SchoolScheduleScreen(),
+      ),
+    );
+  }
+
+  Future<void> _showProgressComingSoonDialog() async {
+    debugPrint('[GENET][CHILD_HOME] Progress tapped');
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Text('בקרוב'),
+          content: const Text(
+            'אזור ההתקדמות נמצא בפיתוח ויגיע בעדכון הבא.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('סגור'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickActionTile({
+    required String title,
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(24),
+        child: Ink(
+          decoration: _ChildHomeUiTokens.surfaceDecoration(),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 22),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 36,
+                color: const Color(0xFF36F36B),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  height: 1.25,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickActionsGrid() {
+    return GridView.count(
+      crossAxisCount: 2,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      mainAxisSpacing: 16,
+      crossAxisSpacing: 16,
+      childAspectRatio: 0.92,
+      children: [
+        _buildQuickActionTile(
+          title: '📚 ספריית Genet',
+          icon: Icons.menu_book_rounded,
+          onTap: _openContentLibrary,
+        ),
+        _buildQuickActionTile(
+          title: '📱 האפליקציות שלי',
+          icon: Icons.apps_rounded,
+          onTap: _openBlockedAppsTimes,
+        ),
+        _buildQuickActionTile(
+          title: '😴 שעות השינה שלי',
+          icon: Icons.bedtime_rounded,
+          onTap: _openSchoolSchedule,
+        ),
+        _buildQuickActionTile(
+          title: '⭐ ההתקדמות שלי',
+          icon: Icons.auto_graph_rounded,
+          onTap: () => unawaited(_showProgressComingSoonDialog()),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWeeklyProgressCard() {
+    const onTimeDays = 5;
+    const totalDays = 7;
+    const progressValue = onTimeDays / totalDays;
+    const percentLabel = '70%';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: _ChildHomeUiTokens.surfaceDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              const Icon(
+                Icons.auto_graph_rounded,
+                color: _ChildHomeUiTokens.accentGreen,
+                size: 22,
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                '⭐ ההתקדמות שלך',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  height: 1.2,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'השבוע הלכת לישון בזמן',
+            textAlign: TextAlign.right,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.7),
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '$onTimeDays מתוך $totalDays ימים',
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              height: 1.2,
+            ),
+          ),
+          const SizedBox(height: 16),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(99),
+            child: LinearProgressIndicator(
+              value: progressValue,
+              minHeight: 8,
+              backgroundColor: Colors.white.withValues(alpha: 0.08),
+              valueColor: const AlwaysStoppedAnimation<Color>(
+                _ChildHomeUiTokens.accentGreen,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Text(
+              percentLabel,
+              style: const TextStyle(
+                color: _ChildHomeUiTokens.accentGreen,
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // UI: scaffold, connection cards, navigation
   // ---------------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    context.watch<NightModeService>();
+    final nightMode = context.watch<NightModeService>();
     // Sole active evaluate/apply site: dedupe inside [ChildProtectionFlow] limits log/side-effect spam.
     final evaluateInputs = _buildProtectionInputs();
     final protectionState = _childProtectionFlow.evaluate(
@@ -1586,554 +2111,118 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
       return protectionUi;
     }
 
-    final parentMessage = _parentMessage;
-
-    return Scaffold(
-            appBar: AppBar(
-              title: Text(l10n.childHomeTitle),
-              leading: IconButton(
-                icon: const Icon(Icons.arrow_back),
-                tooltip: l10n.backToRoleSelect,
-                onPressed: () => safeBackToWelcome(context, 'ChildHomeScreen'),
-              ),
-              actions: const [LanguageSwitcher()],
-            ),
-            body: FutureBuilder<List<dynamic>>(
-              future: Future.wait([
-                ChildModel.load(),
-                getLinkedChildName(),
-                getChildSelfProfile(),
-              ]),
-              builder: (context, snapshot) {
-                final hasData = snapshot.connectionState == ConnectionState.done && snapshot.data != null && snapshot.data!.length >= 3;
-                ChildModel? child;
-                String? linkedName;
-                Map<String, dynamic>? selfProfile;
-                if (hasData) {
-                  child = snapshot.data![0] as ChildModel?;
-                  linkedName = snapshot.data![1] as String?;
-                  selfProfile = snapshot.data![2] as Map<String, dynamic>?;
-                  if (child == null && selfProfile != null && selfProfile.isNotEmpty) {
-                    final first = selfProfile[kChildSelfProfileFirstName] as String? ?? '';
-                    final last = selfProfile[kChildSelfProfileLastName] as String? ?? '';
-                    final name = [first, last].join(' ').trim();
-                    final age = (selfProfile[kChildSelfProfileAge] as num?)?.toInt() ?? 0;
-                    final schoolCode = selfProfile[kChildSelfProfileSchoolCode] as String? ?? '';
-                    if (name.isNotEmpty || age > 0 || schoolCode.isNotEmpty) {
-                      child = ChildModel(name: name, age: age, schoolCode: schoolCode);
-                    }
-                  }
-                }
-                final bool showConnectedCard = _firebaseConnectionStatus == true;
-                final bool showDisconnectedCard =
-                    _firebaseConnectionStatus == false && !_isVerifyingConnection;
-                final bool showConnectionChecking = !showConnectedCard &&
-                    !showDisconnectedCard &&
-                    (_isVerifyingConnection ||
-                        (_canonicalStartupPreflightUnverified &&
-                            _firebaseConnectionStatus != true));
-                return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              if (showConnectionChecking) ...[
-                Card(
-                  elevation: 1,
-                  color: Colors.blue.shade50,
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Row(
-                      textDirection: TextDirection.rtl,
-                      children: [
-                        const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            _canonicalStartupPreflightUnverified
-                                ? 'מאמת חיבור מול השרת…'
-                                : 'בודק חיבור…',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey.shade900,
-                            ),
-                            textDirection: TextDirection.rtl,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: const Color(0xFF020B1F),
+        body: LayoutBuilder(
+          builder: (context, constraints) {
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                _buildNightSkyLayer(
+                  width: constraints.maxWidth,
+                  height: constraints.maxHeight,
                 ),
-                const SizedBox(height: 12),
-              ],
-              if (showConnectedCard && Platform.isAndroid) ...[
-                Card(
-                  elevation: 2,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
+                SafeArea(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Row(
-                          textDirection: TextDirection.rtl,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                _vpnStatusTitle(),
-                                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-                                textDirection: TextDirection.rtl,
-                              ),
-                            ),
-                            _buildVpnStatusDot(_vpnIndicatorStatus),
-                          ],
-                        ),
-                        if (_lastSyncedForVpn?.vpnEnabled == true &&
-                            (_vpnPermissionGranted != true) &&
-                            (_lastSyncedForVpn?.blockedPackages.isNotEmpty ?? false)) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            'יש לאשר הגנת רשת פעם אחת',
-                            style: TextStyle(fontSize: 14, color: Colors.grey.shade800),
-                            textDirection: TextDirection.rtl,
-                          ),
-                          const SizedBox(height: 12),
-                          FilledButton(
-                            onPressed: _onApproveNetworkProtection,
-                            child: const Text('אשר הגנת רשת'),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-              ],
-              if (showConnectedCard) ...[
-                Card(
-                  elevation: 2,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          textDirection: TextDirection.rtl,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(Icons.link, color: AppTheme.primaryBlue),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    'מחובר להורה',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 18,
-                                      color: Colors.grey.shade900,
-                                    ),
-                                    textDirection: TextDirection.rtl,
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    connectedParentHeadlineForChild(
-                                      isCanonicallyConnected: showConnectedCard,
-                                      parentProfileDisplayLine: _parentIdentityDisplaySuffix,
-                                    ),
-                                    style: TextStyle(
-                                      fontSize: 15,
-                                      color: Colors.grey.shade800,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                    textDirection: TextDirection.rtl,
-                                  ),
-                                  if ((_linkedNameForDisplay ?? linkedName) != null &&
-                                      (_linkedNameForDisplay ?? linkedName)!.isNotEmpty)
-                                    Padding(
-                                      padding: const EdgeInsets.only(top: 8),
-                                      child: Text(
-                                        (_linkedNameForDisplay ?? linkedName)!,
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          color: Colors.grey.shade700,
-                                        ),
-                                        textDirection: TextDirection.rtl,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
                         const SizedBox(height: 16),
-                        OutlinedButton(
-                          onPressed: _onMvpChildDisconnectPressed,
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.red.shade800,
-                            side: BorderSide(color: Colors.red.shade400),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          child: const Text('נתק חיבור'),
-                        ),
+                        _buildHeader(),
+                        const SizedBox(height: 24),
+                        _buildNightStatusCard(nightMode),
+                        const SizedBox(height: 20),
+                        _buildParentMessageCard(),
+                        const SizedBox(height: 24),
+                        _buildQuickActionsGrid(),
+                        const SizedBox(height: 24),
+                        _buildWeeklyProgressCard(),
+                        const SizedBox(height: 24),
                       ],
                     ),
                   ),
                 ),
-                const SizedBox(height: 16),
               ],
-              if (showDisconnectedCard) ...[
-                Card(
-                  elevation: 2,
-                  color: Colors.amber.shade50,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          textDirection: TextDirection.rtl,
-                          children: [
-                            Icon(Icons.link_off, color: Colors.amber.shade800, size: 28),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                'לא מחובר להורה',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 16,
-                                  color: Colors.amber.shade900,
-                                ),
-                                textDirection: TextDirection.rtl,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'יש לחבר להורה כדי להפעיל את הניהול',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.amber.shade800,
-                          ),
-                          textDirection: TextDirection.rtl,
-                        ),
-                        const SizedBox(height: 16),
-                        FilledButton.icon(
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => const ChildLinkScreen(),
-                              ),
-                            ).then((_) {
-                              if (mounted) setState(() {});
-                            });
-                          },
-                          icon: const Icon(Icons.link),
-                          label: const Text('התחברות להורה'),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: AppTheme.primaryBlue,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-              ],
-              if (child != null &&
-                  (child.name.isNotEmpty ||
-                      child.age > 0 ||
-                      child.grade.isNotEmpty ||
-                      child.schoolCode.isNotEmpty)) ...[
-                _ChildInfoCard(model: child),
-                const SizedBox(height: 16),
-              ],
-              _ParentMessageCard(message: parentMessage),
-              const SizedBox(height: 16),
-              _MenuCard(
-                title: l10n.scheduleTomorrow,
-                icon: Icons.calendar_today_rounded,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const SchoolScheduleScreen(),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              _MenuCard(
-                title: l10n.blockedAppsAndTimes,
-                icon: Icons.block_rounded,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const BlockedAppsTimesScreen(),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              _MenuCard(
-                title: l10n.contentLibraryTitle,
-                icon: Icons.menu_book_rounded,
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute<void>(
-                      builder: (context) => const ContentLibraryScreen(),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 24),
-            ],
-                );
-              },
-            ),
-    );
-  }
-}
-
-class _ChildInfoCard extends StatelessWidget {
-  const _ChildInfoCard({required this.model});
-  final ChildModel model;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              'פרטי משתמש',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-              textDirection: TextDirection.rtl,
-            ),
-            const SizedBox(height: 12),
-            _InfoRow(label: 'שם', value: model.name),
-            _InfoRow(
-              label: 'גיל',
-              value: model.age > 0 ? model.age.toString() : '',
-            ),
-            _InfoRow(label: 'כיתה', value: model.grade),
-            _InfoRow(label: 'קוד בית ספר', value: model.schoolCode),
-          ],
+            );
+          },
         ),
       ),
     );
   }
 }
 
-class _InfoRow extends StatelessWidget {
-  const _InfoRow({required this.label, required this.value});
-  final String label;
-  final String value;
+class _ChildHomeUiTokens {
+  static const Color cardFill = Color(0xFF071A3A);
+  static const Color borderBlue = Color(0xFF1D8CFF);
+  static const Color accentGreen = Color(0xFF36F36B);
 
-  @override
-  Widget build(BuildContext context) {
-    if (value.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        textDirection: TextDirection.rtl,
-        children: [
-          SizedBox(
-            width: 100,
-            child: Text(
-              label,
-              style: TextStyle(
-                fontWeight: FontWeight.w500,
-                color: Colors.grey.shade700,
-                fontSize: 14,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(fontSize: 14),
-              textDirection: naturalTextDirectionFor(value),
-              textAlign: TextAlign.start,
-            ),
-          ),
-        ],
+  static BoxDecoration surfaceDecoration({
+    BorderRadius borderRadius = const BorderRadius.all(Radius.circular(24)),
+    Gradient? gradient,
+  }) {
+    return BoxDecoration(
+      color: gradient == null ? cardFill : null,
+      gradient: gradient,
+      borderRadius: borderRadius,
+      border: Border.all(
+        color: borderBlue.withValues(alpha: 0.15),
+        width: 1,
       ),
+      boxShadow: [
+        BoxShadow(
+          color: borderBlue.withValues(alpha: 0.12),
+          blurRadius: 16,
+          offset: const Offset(0, 6),
+        ),
+      ],
     );
   }
 }
 
-class _ParentMessageCard extends StatelessWidget {
-  const _ParentMessageCard({required this.message});
-
-  final ParentMessage? message;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasMessage = message != null && message!.hasContent;
-    final theme = Theme.of(context);
-
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(20),
-      elevation: 1,
-      shadowColor: Colors.black.withValues(alpha: 0.04),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          gradient: LinearGradient(
-            colors: [
-              AppTheme.lightBlue.withValues(alpha: 0.42),
-              Colors.white,
-            ],
-            begin: Alignment.topRight,
-            end: Alignment.bottomLeft,
-          ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.92),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(
-                      Icons.favorite_rounded,
-                      color: AppTheme.primaryBlue.withValues(alpha: 0.82),
-                      size: 18,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Message from Parent',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: Colors.blueGrey.shade900,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                hasMessage
-                    ? message!.body
-                    : 'A message from your parent will appear here',
-                maxLines: hasMessage ? 3 : 2,
-                overflow: TextOverflow.ellipsis,
-                textDirection: naturalTextDirectionFor(
-                  hasMessage ? message!.body : 'A message from your parent will appear here',
-                ),
-                textAlign: TextAlign.start,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  height: 1.45,
-                  color: hasMessage
-                      ? Colors.blueGrey.shade800
-                      : Colors.blueGrey.shade500,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                hasMessage
-                    ? _formatUpdatedLabel(message!.updatedAt)
-                    : 'No message yet',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: Colors.blueGrey.shade500,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _formatUpdatedLabel(DateTime updatedAt) {
-    final now = DateTime.now();
-    final diff = now.difference(updatedAt);
-    if (diff.inMinutes < 1) return 'updated just now';
-    if (diff.inHours < 1) return 'updated recently';
-    if (diff.inHours < 24) return 'updated ${diff.inHours}h ago';
-    if (diff.inDays == 1) return 'updated yesterday';
-    final month = updatedAt.month.toString().padLeft(2, '0');
-    final day = updatedAt.day.toString().padLeft(2, '0');
-    return 'updated on $day/$month';
-  }
-}
-
-class _MenuCard extends StatelessWidget {
-  const _MenuCard({
-    required this.title,
-    required this.icon,
-    required this.onTap,
+class _ChildHomeStarSpec {
+  const _ChildHomeStarSpec(
+    this.x,
+    this.y,
+    this.size,
+    this.opacity, {
+    this.useBlueTint = false,
   });
 
-  final String title;
-  final IconData icon;
-  final VoidCallback onTap;
+  final double x;
+  final double y;
+  final double size;
+  final double opacity;
+  final bool useBlueTint;
+}
 
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      elevation: 2,
-      shadowColor: Colors.black.withValues(alpha: 0.08),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          child: Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: AppTheme.lightBlue,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(icon, color: AppTheme.primaryBlue, size: 28),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-              Icon(
-                Icons.arrow_forward_ios,
-                size: 14,
-                color: Colors.grey.shade400,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+class _ChildHomeStarField {
+  static const List<_ChildHomeStarSpec> stars = [
+    _ChildHomeStarSpec(0.06, 0.05, 3.0, 0.58),
+    _ChildHomeStarSpec(0.14, 0.11, 2.0, 0.34),
+    _ChildHomeStarSpec(0.22, 0.04, 2.5, 0.44, useBlueTint: true),
+    _ChildHomeStarSpec(0.31, 0.09, 2.0, 0.3),
+    _ChildHomeStarSpec(0.39, 0.06, 4.0, 0.48),
+    _ChildHomeStarSpec(0.48, 0.13, 2.0, 0.38, useBlueTint: true),
+    _ChildHomeStarSpec(0.57, 0.05, 2.5, 0.46),
+    _ChildHomeStarSpec(0.66, 0.10, 2.0, 0.32),
+    _ChildHomeStarSpec(0.74, 0.07, 3.5, 0.52),
+    _ChildHomeStarSpec(0.83, 0.12, 2.0, 0.36, useBlueTint: true),
+    _ChildHomeStarSpec(0.91, 0.06, 2.5, 0.42),
+    _ChildHomeStarSpec(0.18, 0.18, 2.0, 0.26),
+    _ChildHomeStarSpec(0.44, 0.17, 3.0, 0.4),
+    _ChildHomeStarSpec(0.62, 0.19, 2.0, 0.3, useBlueTint: true),
+    _ChildHomeStarSpec(0.78, 0.16, 3.5, 0.46),
+    _ChildHomeStarSpec(0.10, 0.24, 1.5, 0.22),
+    _ChildHomeStarSpec(0.53, 0.22, 2.5, 0.28),
+    _ChildHomeStarSpec(0.88, 0.21, 2.0, 0.34),
+    _ChildHomeStarSpec(0.27, 0.27, 4.0, 0.36),
+    _ChildHomeStarSpec(0.71, 0.28, 3.0, 0.32, useBlueTint: true),
+    _ChildHomeStarSpec(0.35, 0.31, 1.5, 0.2),
+    _ChildHomeStarSpec(0.95, 0.18, 2.0, 0.24),
+    _ChildHomeStarSpec(0.04, 0.14, 3.5, 0.4),
+    _ChildHomeStarSpec(0.58, 0.32, 2.0, 0.18),
+  ];
 }

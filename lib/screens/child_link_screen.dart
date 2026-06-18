@@ -674,6 +674,40 @@ class _ChildLinkScreenState extends State<ChildLinkScreen>
     unawaited(_connectWithCode(linkCode));
   }
 
+  void _navigateBetaBypassToChildHome() {
+    if (_navigatingAway || _successHandled) return;
+    _navigatingAway = true;
+    debugPrint('[GENET][CHILD_LINK] beta bypass to ChildHomeScreen');
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => const ChildHomeScreen()),
+      (route) => false,
+    );
+  }
+
+  Widget _buildDebugBetaBypassButton() {
+    if (!kDebugMode) return const SizedBox.shrink();
+
+    return Column(
+      children: [
+        const SizedBox(height: 12),
+        // TODO: Remove beta bypass before production.
+        TextButton(
+          onPressed: (_linking || _navigatingAway || _successHandled)
+              ? null
+              : _navigateBetaBypassToChildHome,
+          child: Text(
+            'המשך ללא סריקת QR',
+            style: TextStyle(
+              color: Colors.orange.shade300,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Directionality(
@@ -876,6 +910,7 @@ class _ChildLinkScreenState extends State<ChildLinkScreen>
               ),
             ),
           ),
+          _buildDebugBetaBypassButton(),
         ],
       ),
     );
