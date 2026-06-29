@@ -32,8 +32,8 @@ import '../widgets/language_switcher.dart';
 import '../widgets/natural_text_field.dart';
 import 'blocked_apps_times_screen.dart';
 import 'child_link_screen.dart';
+import 'child_sleep_hours_screen.dart';
 import 'content_library_screen.dart';
-import 'school_schedule_screen.dart';
 
 /// MVP child-initiated disconnect confirmation dialog (widget-tested from [ChildHomeScreen]).
 Future<bool> showChildMvpDisconnectConfirmation(BuildContext context) async {
@@ -1887,11 +1887,11 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
   }
 
   void _openSchoolSchedule() {
-    debugPrint('[GENET][CHILD_HOME] Sleep tapped');
+    debugPrint('[GENET][CHILD_HOME] Mission tapped');
     Navigator.push<void>(
       context,
       MaterialPageRoute<void>(
-        builder: (_) => const SchoolScheduleScreen(),
+        builder: (_) => const ChildSleepHoursScreen(),
       ),
     );
   }
@@ -1980,8 +1980,8 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> with WidgetsBindingOb
           onTap: _openBlockedAppsTimes,
         ),
         _buildQuickActionTile(
-          title: '😴 שעות השינה שלי',
-          icon: Icons.bedtime_rounded,
+          title: '⭐ המשימה שלי',
+          icon: Icons.star_rounded,
           onTap: _openSchoolSchedule,
         ),
         _buildQuickActionTile(
