@@ -12,6 +12,7 @@ import 'add_child_by_link_screen.dart';
 import 'blocked_apps_screen.dart';
 import 'children_management_screen.dart';
 import 'content_library_screen.dart';
+import 'parent_daily_missions_screen.dart';
 import 'settings_screen.dart';
 import 'sleep_lock_screen.dart';
 
@@ -634,6 +635,10 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
     _pushExistingScreen(const SettingsScreen());
   }
 
+  void _openDailyMissions() {
+    _pushExistingScreen(const ParentDailyMissionsScreen());
+  }
+
   void _openMessagesScreen() {
     final refreshKey = _messageRefreshKey;
     _pushExistingScreen(
@@ -792,6 +797,8 @@ class _ParentDashboardTabState extends State<ParentDashboardTab> {
                   ],
                 ),
               ),
+              const SizedBox(height: _DashboardTokens.sectionGap),
+              _DailyMissionsLaunchCard(onTap: _openDailyMissions),
               const SizedBox(height: _DashboardTokens.sectionGap),
               _MessageLaunchCard(onTap: _openMessagesScreen),
               const SizedBox(height: _DashboardTokens.sectionGap),
@@ -1325,6 +1332,71 @@ class _QuickActionCard extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DailyMissionsLaunchCard extends StatelessWidget {
+  const _DailyMissionsLaunchCard({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 52,
+      child: _DashboardTapTarget(
+        onTap: onTap,
+        borderRadius: _DashboardTokens.cardRadiusBR,
+        child: Container(
+          decoration: _DashboardTokens.panelDecoration(),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              Icon(
+                Icons.task_alt_rounded,
+                color: _DashboardTokens.neonGreen.withValues(alpha: 0.9),
+                size: 22,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'משימות הילד',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white.withValues(alpha: 0.94),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      'צור משימות יומיות ואשר תגמולים אחרי ביצוע.',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.45),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_left_rounded,
+                color: Colors.white.withValues(alpha: 0.35),
+                size: 16,
+              ),
+            ],
+          ),
         ),
       ),
     );
